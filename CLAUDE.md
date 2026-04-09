@@ -86,7 +86,33 @@ If a strategy passes 5 out of 6 criteria with a compelling hypothesis, it may st
 
 ---
 
-## 5. Paper Trading Parameters
+## 5. Data Source Limitations
+
+Know these before planning any backtest. They affect what date ranges are valid
+and whether a "≥ 2 years tested" criterion can be met.
+
+| Source | Interval | Max history | Notes |
+|---|---|---|---|
+| yfinance | 1m | **7 days** | Not usable for meaningful backtests |
+| yfinance | 5m / 15m / 30m | **60 days** | ~40 trading days; too short for promotion criteria |
+| yfinance | 1h | ~2 years | Usable for coarse intraday tests |
+| yfinance | 1d | 50+ years | Best source for daily-bar strategies |
+| Alpaca (free IEX feed) | 1m / 5m | **~1–2 years** | Verified: full 2025 returns fine; older data may be missing |
+| Alpaca (free IEX feed) | 1d | ~5+ years | Sufficient for daily strategies |
+| Alpaca (paid SIP feed) | all | Full history | Not currently subscribed |
+
+**Practical rules:**
+- For intraday strategies on 5m bars: use Alpaca, test 1 full calendar year at a time.
+- Do not use yfinance for 5m backtests — 60 days is not enough signal.
+- The "≥ 2 years tested" promotion criterion **cannot be met with Alpaca free tier
+  on 5m bars.** Document this explicitly in every run note that uses intraday data.
+  Promote with justification only if 1 year of results is strong (Sharpe ≥ 1.0).
+- When using Alpaca historical data, always verify the loaded bar count in the logs
+  before trusting the result. Sparse data can silently produce misleading metrics.
+
+---
+
+## 6. Paper Trading Parameters
 
 When a strategy is promoted, use these conservative settings:
 
