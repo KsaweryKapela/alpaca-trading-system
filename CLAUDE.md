@@ -25,7 +25,9 @@ Each cycle follows these steps in order. Do not skip steps.
 1. PICK    → Choose one strategy idea. Write down the hypothesis before touching code.
 2. BUILD   → Implement or adapt existing code. Keep changes minimal and targeted.
 3. TEST    → Run backtest. Use at least 2 years of data. Test on 2+ symbols.
-4. EVAL    → Score against promotion criteria (see Section 4). Be honest.
+4. EVAL    → Score against promotion criteria (see Section 4). Review ALL extended metrics
+              (win rate, profit factor, expectancy, max consec losses, avg duration).
+              For intraday strategies: run walk_forward() and check avg test Sharpe ≥ 0.3.
 5. DECIDE  → Reject / Revise / Promote to paper trading.
 6. LOG     → Write the run note as soon as the FIRST result lands — not after variants.
               Variants are appended as ## Run 2, ## Run 3 in the same file after logging.
@@ -152,7 +154,7 @@ Log observations in the run note under `## Paper Trading Log`.
 
 ---
 
-## 6. Run Note Template
+## 7. Run Note Template
 
 Every run gets a file in `experiments/runs/`. Copy this template exactly.
 
@@ -184,9 +186,9 @@ Write this before running any code.
 |---|---|
 | Symbols | |
 | Date range | |
-| Fast period | |
-| Slow period (or other params) | |
+| Key parameters | |
 | Data source | yfinance / alpaca |
+| Bar interval | |
 | Initial cash | $100,000 |
 
 ## Backtest Results
@@ -194,25 +196,38 @@ Write this before running any code.
 | Metric | Value |
 |---|---|
 | Total return | |
-| Sharpe ratio | |
+| Sharpe ratio (daily) | |
 | Max drawdown | |
-| Number of trades | |
+| Round trips | |
+| Win rate | |
+| Profit factor | |
+| Expectancy | |
+| Max consec losses | |
+| Avg trade duration | |
 | Final equity | |
 
 Paste full output here:
 
     (output)
 
+## Walk-Forward (intraday strategies only)
+
+    (paste print_walk_forward_summary() output, or "N/A — daily strategy")
+
+Avg test Sharpe: | Positive folds:
+
 ## Evaluation
 
 Score against promotion criteria:
 
-- [ ] Sharpe ≥ 0.5
+- [ ] Sharpe ≥ 0.5 (daily, annualized)
 - [ ] Max drawdown ≤ 25%
 - [ ] Positive total return
-- [ ] ≥ 15 trades
-- [ ] ≥ 2 years tested
+- [ ] ≥ 15 round trips
+- [ ] ≥ 2 years tested (or justified exception for Alpaca free tier)
 - [ ] ≥ 2 symbols / windows tested
+- [ ] Win rate ≥ 40% OR profit factor ≥ 1.5
+- [ ] Walk-forward avg test Sharpe ≥ 0.3 (intraday only)
 
 Observations:
 
@@ -251,7 +266,7 @@ What is the next strategy to test, or the next revision of this one?
 
 ---
 
-## 7. How to Continue After a Completed Cycle
+## 8. How to Continue After a Completed Cycle
 
 When a cycle is marked **Complete**:
 
@@ -264,7 +279,7 @@ Do not carry forward vague intentions. The `Next Step` field in every run note m
 
 ---
 
-## 8. Code Modification Rules
+## 9. Code Modification Rules
 
 - If existing code is sufficient to test the strategy, **do not modify it**. Just run it.
 - If the strategy requires a new signal type or data, **add a new file** in `trading/strategy/`. Do not modify existing strategies.
@@ -284,7 +299,7 @@ Do not carry forward vague intentions. The `Next Step` field in every run note m
 
 ---
 
-## 9. Realistic Scope of This System
+## 10. Realistic Scope of This System
 
 This is a **bar-based rule-driven system**, not an HFT platform.
 
@@ -328,7 +343,7 @@ it looks good, the result is not a strategy — it is a curve fit.
 
 ---
 
-## 10. Reminders
+## 11. Reminders
 
 - **Start simple.** A strategy that has 3 clear rules beats a strategy with 10 tuned parameters.
 - **Test period must include a bear market or volatile period**, not just a bull run.
