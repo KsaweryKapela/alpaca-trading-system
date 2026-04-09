@@ -1,7 +1,8 @@
-# CLAUDE.md — Operating Manual for Strategy Research & Deployment
+# CLAUDE.md — Operating Manual for Strategy Research & Backtesting
 
 This file defines how I work inside this repo.  
 It is my task loop, process guide, and decision framework for iterative strategy research.  
+For now, the scope is research only: design tests, run backtests, evaluate results, and identify promising strategies.  
 I read this at the start of every session to know where I am and what to do next.
 
 ---
@@ -10,10 +11,10 @@ I read this at the start of every session to know where I am and what to do next
 
 > **Update this section at the end of every session.**
 
-- **Active strategy:** ORB with volume + regime filter (Run 002)
+- **Active strategy:** VWAP mean reversion (Run 003)
 - **Phase:** Not yet started
-- **Last run:** 001 — ORB base config — REJECTED (−1.08%, Sharpe −0.04)
-- **Next action:** Implement volume filter + regime filter in `trading/strategy/orb.py`, run backtest on SPY with 5m Alpaca bars 2025-01-01 → 2026-01-01. Log in `experiments/runs/002_orb_filtered.md`.
+- **Last run:** 002 — ORB with volume + regime filter — REJECTED (−0.37%, Sharpe −1.05, win rate 31.7%)
+- **Next action:** Implement VWAP mean reversion in `trading/strategy/vwap_reversion.py`, run backtest on SPY with 5m Alpaca bars 2025-01-01 → 2026-01-01. Log in `experiments/runs/003_vwap_reversion.md`.
 
 ---
 
@@ -23,23 +24,26 @@ Each cycle follows these steps in order. Do not skip steps.
 
 ```
 1. PICK    → Choose one strategy idea. Write down the hypothesis before touching code.
-2. BUILD   → Implement or adapt existing code. Keep changes minimal and targeted.
-3. TEST    → Run backtest. Use at least 2 years of data. Test on 2+ symbols.
-4. EVAL    → Score against promotion criteria (see Section 4). Review ALL extended metrics
+              Log the hypothesis immediately in the run note and `experiments/STATUS.md`.
+2. BUILD   → Implement or adapt only the minimum code needed to run a valid backtest.
+              Do not build deployment or paper-trading workflow in this step.
+              Log exactly what was added or changed before moving on.
+3. TEST    → Run backtest. Use at least 2 years of data when the source allows it.
+              Test on 2+ symbols or 2+ distinct windows.
+              Log configuration and raw results immediately after each test run.
+4. FIX     → If you notice a bug, data issue, metric bug, execution flaw, or invalid assumption,
+              fix it before continuing. Log the issue, the root cause, and the fix immediately.
+5. EVAL    → Score against candidate criteria (see Section 4). Review ALL extended metrics
               (win rate, profit factor, expectancy, max consec losses, avg duration).
               For intraday strategies: run walk_forward() and check avg test Sharpe ≥ 0.3.
-5. DECIDE  → Reject / Revise / Promote to paper trading.
-6. LOG     → Write the run note as soon as the FIRST result lands — not after variants.
-              Variants are appended as ## Run 2, ## Run 3 in the same file after logging.
+              Log the evaluation before making a decision.
+6. DECIDE  → Reject / Revise / Mark as promising candidate.
+              Log the decision and the exact reason immediately.
 7. REPEAT  → Pick the next strategy. Go back to step 1.
 ```
 
-If promoted:
-```
-5a. DEPLOY → Start paper trading on Alpaca with reduced risk settings.
-5b. OBSERVE → Monitor for at least 10 trading days. Log observations.
-5c. CONCLUDE → Write final conclusion. Mark cycle complete. Move to next strategy.
-```
+For now, stop after step 6.  
+No paper trading or live deployment is part of the current loop.
 
 ---
 
@@ -65,9 +69,9 @@ trading/
 
 ---
 
-## 4. Promotion Criteria (Backtest → Paper Trading)
+## 4. Candidate Criteria (Backtest → Promising)
 
-A strategy must meet **all** of the following before being promoted:
+A strategy should meet **all** of the following before being marked as a promising candidate:
 
 | Criterion | Minimum threshold |
 |---|---|
@@ -97,14 +101,14 @@ symbol_dfs = load_bars_alpaca(["SPY"], start, end, api_key, secret_key, interval
 results = walk_forward(engine, lambda: ORBStrategy(["SPY"]), symbol_dfs, train_days=90, test_days=30)
 print_walk_forward_summary(results)
 ```
-Require: avg test-window Sharpe ≥ 0.3 AND positive folds ≥ 50% before promotion.
+Require: avg test-window Sharpe ≥ 0.3 AND positive folds ≥ 50% before marking as promising.
 
-If a strategy passes 5 out of 6 criteria with a compelling hypothesis, it may still be promoted — but this must be explicitly justified in the run note.
+If a strategy passes most criteria with a compelling hypothesis, it may still be marked promising, but this must be explicitly justified in the run note.
 
 **Hard rules:**
-- No strategy goes to paper trading without a completed run note in `experiments/runs/`.
-- No strategy goes to paper trading based on a single symbol test.
-- If it only barely passes, reduce paper trading exposure further (see Section 5).
+- No strategy is marked promising without a completed run note in `experiments/runs/`.
+- No strategy is marked promising based on a single symbol test.
+- If results are marginal, mark it as "revise" instead of "promising".
 
 ---
 
@@ -134,23 +138,17 @@ and whether a "≥ 2 years tested" criterion can be met.
 
 ---
 
-## 6. Paper Trading Parameters
+## 6. Current Scope
 
-When a strategy is promoted, use these conservative settings:
+Current workflow stops at research output:
 
-| Parameter | Backtest default | Paper trading |
-|---|---|---|
-| `max_position_pct` | 10% | 5% |
-| `max_positions` | 10 | 5 |
-| `initial_cash` | $100,000 | use Alpaca paper balance |
+- Define the hypothesis.
+- Build only enough code to test it.
+- Run backtests and walk-forward checks.
+- Log the results.
+- Classify the idea as rejected, revised, or promising.
 
-Run with:
-```bash
-uv run python main.py paper --symbols <SYMBOLS> --fast <N> --slow <N>
-```
-
-Observe for **at least 10 trading days** before drawing conclusions.  
-Log observations in the run note under `## Paper Trading Log`.
+Do not add paper-trading or live-deployment work unless the repo goals are explicitly expanded.
 
 ---
 
@@ -164,7 +162,7 @@ Every run gets a file in `experiments/runs/`. Copy this template exactly.
 # Run NNN — <Strategy Name>
 
 **Date:** YYYY-MM-DD  
-**Status:** [ ] In Progress  [ ] Rejected  [ ] Revised  [ ] Promoted to Paper  [ ] Complete
+**Status:** [ ] In Progress  [ ] Rejected  [ ] Revised  [ ] Promising  [ ] Complete
 
 ---
 
@@ -218,7 +216,7 @@ Avg test Sharpe: | Positive folds:
 
 ## Evaluation
 
-Score against promotion criteria:
+Score against candidate criteria:
 
 - [ ] Sharpe ≥ 0.5 (daily, annualized)
 - [ ] Max drawdown ≤ 25%
@@ -235,23 +233,9 @@ Observations:
 
 **[ ] Reject** — reason:  
 **[ ] Revise** — what to change, then re-run:  
-**[ ] Promote to paper trading** — justification:  
+**[ ] Mark as promising** — justification:  
 
 ---
-
-## Paper Trading Log
-
-*(Fill in only if promoted)*
-
-**Start date:**  
-**Symbols:**  
-**Settings used:**  
-
-| Date | Observation |
-|---|---|
-| | |
-
-**Paper trading conclusion:**
 
 ---
 

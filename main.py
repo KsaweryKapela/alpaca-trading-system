@@ -48,6 +48,18 @@ def _build_strategy(args, symbols):
             exit_time=datetime.time(h, m),
         )
 
+    if strategy == "orb-filtered":
+        from trading.strategy.orb_filtered import ORBFilteredStrategy
+        h, m = map(int, args.exit_time.split(":"))
+        return ORBFilteredStrategy(
+            symbols=symbols,
+            range_minutes=args.range_minutes,
+            exit_time=datetime.time(h, m),
+            volume_multiplier=args.volume_mult,
+            sma_period=args.sma_period,
+            regime_symbol=args.regime_symbol or None,
+        )
+
     # default: sma
     from trading.strategy.sma_cross import SMACrossStrategy
     return SMACrossStrategy(
@@ -60,7 +72,7 @@ def _build_strategy(args, symbols):
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--symbols", nargs="+", required=True, metavar="SYM",
                         help="One or more ticker symbols")
-    parser.add_argument("--strategy", choices=["sma", "orb"], default="sma",
+    parser.add_argument("--strategy", choices=["sma", "orb", "orb-filtered"], default="sma",
                         help="Strategy to run (default: sma)")
     # SMA args
     parser.add_argument("--fast", type=int, default=20,
@@ -72,6 +84,13 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
                         help="[orb] Opening range duration in minutes (default: 15)")
     parser.add_argument("--exit-time", dest="exit_time", default="15:55",
                         help="[orb] EOD exit time in NY HH:MM (default: 15:55)")
+    # ORB-filtered args
+    parser.add_argument("--volume-mult", dest="volume_mult", type=float, default=1.5,
+                        help="[orb-filtered] Volume multiplier for entry filter (default: 1.5)")
+    parser.add_argument("--sma-period", dest="sma_period", type=int, default=20,
+                        help="[orb-filtered] SMA period for regime filter (default: 20)")
+    parser.add_argument("--regime-symbol", dest="regime_symbol", default="SPY",
+                        help="[orb-filtered] Regime filter symbol (default: SPY, empty=disabled)")
 
 
 def cmd_backtest(args: argparse.Namespace) -> None:

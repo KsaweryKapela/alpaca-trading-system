@@ -12,7 +12,6 @@ current-bar close prices. The engine comment shows how to do this.
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .base import Executor
@@ -39,14 +38,16 @@ class SimulatedExecutor(Executor):
                 order.status = OrderStatus.REJECTED
                 continue
 
-            # Cap fill quantity to max_volume_pct of the bar's volume
-            if volumes is not None and self.config.max_volume_pct > 0:
+            # Cap fill quantity to max_volume_pct of the bar's volume.
+            # Only applied to buys (entries) — never to sells (exits), so that
+            # closing an existing position is never split into partial fills.
+            if order.side == Side.BUY and volumes is not None and self.config.max_volume_pct > 0:
                 bar_vol = volumes.get(order.symbol, 0)
                 if bar_vol > 0:
                     vol_cap = int(bar_vol * self.config.max_volume_pct)
                     if vol_cap < order.quantity:
                         logger.debug(
-                            "Volume cap: %s fill reduced %d → %d shares (bar vol=%d)",
+                            "Volume cap: %s buy reduced %d → %d shares (bar vol=%d)",
                             order.symbol, order.quantity, vol_cap, int(bar_vol),
                         )
                         order.quantity = vol_cap
@@ -58,7 +59,9 @@ class SimulatedExecutor(Executor):
             fill_price = price + slippage if order.side == Side.BUY else price - slippage
 
             order.fill_price = round(fill_price, 4)
-            order.filled_at = datetime.now(timezone.utc)
+            # Use the order's creation timestamp (= bar time) so that
+            # extended_metrics() can compute accurate trade durations.
+            order.filled_at = order.created_at
             order.commission = round(order.quantity * self.config.commission_per_share, 4)
             order.status = OrderStatus.FILLED
 
