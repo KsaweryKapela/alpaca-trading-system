@@ -33,6 +33,7 @@ class BacktestConfig:
     initial_cash: float = 100_000.0
     commission_per_share: float = 0.005   # $0.005/share (IB-style)
     slippage_bps: float = 5.0             # 5 basis points
+    max_volume_pct: float = 0.01          # fill at most 1% of bar volume per order
 
 
 @dataclass
@@ -40,6 +41,7 @@ class RiskConfig:
     max_position_pct: float = 0.10   # max 10% of equity per position
     max_positions: int = 10
     min_cash_pct: float = 0.05       # keep at least 5% in cash
+    max_daily_loss_pct: float = 0.02  # halt new entries if down ≥2% on the day (0 = disabled)
 
 
 @dataclass

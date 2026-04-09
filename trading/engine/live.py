@@ -41,6 +41,7 @@ class LiveEngine:
         self._bar_buffer: Dict[datetime, Dict[str, Bar]] = {}
         self._latest_prices: Dict[str, float] = {}
         self._trading_client = None   # created after credential validation in run()
+        self._last_trading_date: Optional[object] = None
 
     def _sync_portfolio(self) -> Portfolio:
         """Pull cash, positions, and open orders from Alpaca."""
@@ -81,6 +82,13 @@ class LiveEngine:
         # Without this, portfolio.equity() falls back to avg_price for symbols
         # not present in the current bar batch, mispricing the portfolio.
         prices = {**self._latest_prices, **{sym: bar.close for sym, bar in bars.items()}}
+
+        # Detect new trading day → reset daily loss limit tracking
+        ts = next(iter(bars.values())).timestamp
+        bar_date = ts.date()
+        if bar_date != self._last_trading_date:
+            self.risk.new_day(self._portfolio.equity(prices))
+            self._last_trading_date = bar_date
 
         signals = strategy.on_bar(bars, self._portfolio)
 

@@ -21,6 +21,19 @@ logger = logging.getLogger(__name__)
 class RiskManager:
     def __init__(self, config: RiskConfig) -> None:
         self.config = config
+        self._day_start_equity: float = 0.0
+
+    def new_day(self, equity: float) -> None:
+        """Record equity at the start of a new trading day for loss-limit tracking."""
+        self._day_start_equity = equity
+
+    def is_halted(self, portfolio: Portfolio, prices: Dict[str, float]) -> bool:
+        """Return True if the daily loss limit has been breached."""
+        if self.config.max_daily_loss_pct <= 0 or self._day_start_equity <= 0:
+            return False
+        equity = portfolio.equity(prices)
+        pnl_pct = (equity - self._day_start_equity) / self._day_start_equity
+        return pnl_pct < -self.config.max_daily_loss_pct
 
     def validate(
         self,
@@ -33,7 +46,16 @@ class RiskManager:
         Tracks cash committed and positions opened within the same batch so
         that multiple simultaneous buy signals cannot together exceed the
         intended cash buffer or position limits.
+
+        When the daily loss limit is breached, new long entries are blocked.
+        Exit signals (FLAT) are always allowed through.
         """
+        if self.is_halted(portfolio, prices):
+            logger.warning("Daily loss limit breached — blocking new entries")
+            signals = [s for s in signals if s.direction == Direction.FLAT]
+            if not signals:
+                return []
+
         orders: List[Order] = []
         equity = portfolio.equity(prices)
         cash_floor = equity * self.config.min_cash_pct

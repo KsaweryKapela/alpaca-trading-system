@@ -13,7 +13,7 @@ current-bar close prices. The engine comment shows how to do this.
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .base import Executor
 from ..config import BacktestConfig
@@ -26,13 +26,33 @@ class SimulatedExecutor(Executor):
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
 
-    def execute(self, orders: List[Order], prices: Dict[str, float]) -> List[Order]:
+    def execute(
+        self,
+        orders: List[Order],
+        prices: Dict[str, float],
+        volumes: Optional[Dict[str, float]] = None,
+    ) -> List[Order]:
         for order in orders:
             price = prices.get(order.symbol)
             if price is None:
                 logger.warning("No fill price for %s — rejecting", order.symbol)
                 order.status = OrderStatus.REJECTED
                 continue
+
+            # Cap fill quantity to max_volume_pct of the bar's volume
+            if volumes is not None and self.config.max_volume_pct > 0:
+                bar_vol = volumes.get(order.symbol, 0)
+                if bar_vol > 0:
+                    vol_cap = int(bar_vol * self.config.max_volume_pct)
+                    if vol_cap < order.quantity:
+                        logger.debug(
+                            "Volume cap: %s fill reduced %d → %d shares (bar vol=%d)",
+                            order.symbol, order.quantity, vol_cap, int(bar_vol),
+                        )
+                        order.quantity = vol_cap
+                    if order.quantity <= 0:
+                        order.status = OrderStatus.REJECTED
+                        continue
 
             slippage = price * self.config.slippage_bps / 10_000
             fill_price = price + slippage if order.side == Side.BUY else price - slippage
