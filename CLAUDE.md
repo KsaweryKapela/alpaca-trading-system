@@ -69,13 +69,33 @@ A strategy must meet **all** of the following before being promoted:
 
 | Criterion | Minimum threshold |
 |---|---|
-| Sharpe ratio (annualized) | ≥ 0.5 |
+| Sharpe ratio (annualized, daily) | ≥ 0.5 |
 | Max drawdown | ≤ 25% |
 | Total return | Positive over full test period |
 | Number of trades | ≥ 15 (enough signal frequency to be meaningful) |
 | Test period | ≥ 2 full years |
 | Symbols tested | ≥ 2 different symbols or time windows |
 | Consistency | Results not wildly different across tested symbols |
+
+**Note on Sharpe:** The backtest engine resamples the equity curve to daily frequency before computing Sharpe. The annualization factor is always √252 regardless of bar interval. This avoids the "5m bars inflate Sharpe by √78" bug.
+
+**Extended metrics to review** (printed by `print_summary()`):
+- Win rate — below 40% is a warning sign even if overall return is positive
+- Profit factor — gross wins / gross losses; ≥ 1.5 is a reasonable bar
+- Expectancy — average dollar P&L per round trip; negative = losing strategy
+- Max consecutive losses — if > 5, ensure drawdown is still within tolerance
+- Avg trade duration — sanity-check against strategy intent (ORB should be hours, not days)
+
+**Walk-forward check** (run before promoting any intraday strategy):
+```python
+from trading.research.walk_forward import walk_forward, print_walk_forward_summary
+from trading.data.historical import load_bars_alpaca
+
+symbol_dfs = load_bars_alpaca(["SPY"], start, end, api_key, secret_key, interval="5m")
+results = walk_forward(engine, lambda: ORBStrategy(["SPY"]), symbol_dfs, train_days=90, test_days=30)
+print_walk_forward_summary(results)
+```
+Require: avg test-window Sharpe ≥ 0.3 AND positive folds ≥ 50% before promotion.
 
 If a strategy passes 5 out of 6 criteria with a compelling hypothesis, it may still be promoted — but this must be explicitly justified in the run note.
 
@@ -313,6 +333,6 @@ it looks good, the result is not a strategy — it is a curve fit.
 - **Start simple.** A strategy that has 3 clear rules beats a strategy with 10 tuned parameters.
 - **Test period must include a bear market or volatile period**, not just a bull run.
 - **Slippage and commission matter.** The backtest already applies 5bps slippage and $0.005/share commission. Do not ignore this in evaluation.
-- **Overfitting check:** if the strategy only works for one specific ticker in one specific year, it's not a strategy.
+- **Overfitting check:** if the strategy only works for one specific ticker in one specific year, it's not a strategy. Use `walk_forward()` before promoting any intraday strategy.
 - **Paper trading is not validation.** 10 days of paper trading is observational only. Treat it as a sanity check, not a performance benchmark.
 - **Document failures.** A rejected strategy with a clear reason why is valuable. Do not delete run notes.
