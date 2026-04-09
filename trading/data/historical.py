@@ -63,6 +63,12 @@ def load_bars_alpaca(
     secret_key: str,
 ) -> Dict[str, pd.DataFrame]:
     """Download OHLCV bars from Alpaca historical data API."""
+    if not api_key or not secret_key:
+        raise ValueError(
+            "Alpaca credentials required for --data-source alpaca. "
+            "Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file."
+        )
+
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame

@@ -1,7 +1,12 @@
 """Backtest engine: run a strategy on historical data.
 
-Data flow per timestep:
-  historical bar → strategy.on_bar() → risk.validate() → simulated fill → portfolio.apply_fill()
+Execution model (lookahead-free):
+  Bar T close  → strategy.on_bar() → risk.validate() → orders queued
+  Bar T+1 open → SimulatedExecutor fills queued orders → portfolio updated
+  Bar T+1 close → equity recorded, next signals generated
+
+Filling at the next bar's open rather than the signal bar's close ensures
+the strategy cannot act on information that only exists at bar-end.
 
 After all bars:
   equity curve → metrics (return, Sharpe, max drawdown, trade count)
@@ -101,20 +106,31 @@ class BacktestEngine:
 
         equity_timestamps: List[datetime] = []
         equity_values: List[float] = []
+        pending_orders: List = []   # orders queued from previous bar, filled at this bar's open
 
         for bars in iter_bars(symbol_dfs):
-            prices = {sym: bar.close for sym, bar in bars.items()}
+            open_prices = {sym: bar.open for sym, bar in bars.items()}
+            close_prices = {sym: bar.close for sym, bar in bars.items()}
 
+            # Step 1: Fill orders queued from previous bar at today's open
+            if pending_orders:
+                filled = self.executor.execute(pending_orders, open_prices)
+                for order in filled:
+                    portfolio.apply_fill(order)
+                pending_orders = []
+
+            # Step 2: Generate signals from today's close; queue for next bar
             signals = strategy.on_bar(bars, portfolio)
-            orders = self.risk.validate(signals, portfolio, prices)
-            filled = self.executor.execute(orders, prices)
+            pending_orders = self.risk.validate(signals, portfolio, close_prices)
 
-            for order in filled:
-                portfolio.apply_fill(order)
-
+            # Step 3: Record end-of-day equity (positions valued at close)
             ts = next(iter(bars.values())).timestamp
             equity_timestamps.append(ts)
-            equity_values.append(portfolio.equity(prices))
+            equity_values.append(portfolio.equity(close_prices))
+
+        # Discard any signals from the final bar — no next bar to fill at
+        if pending_orders:
+            logger.debug("Discarding %d unfilled order(s) at end of backtest.", len(pending_orders))
 
         strategy.on_stop()
 

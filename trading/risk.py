@@ -28,10 +28,17 @@ class RiskManager:
         portfolio: Portfolio,
         prices: Dict[str, float],
     ) -> List[Order]:
-        """Convert signals into orders, applying position sizing and risk rules."""
+        """Convert signals into orders, applying position sizing and risk rules.
+
+        Tracks cash committed and positions opened within the same batch so
+        that multiple simultaneous buy signals cannot together exceed the
+        intended cash buffer or position limits.
+        """
         orders: List[Order] = []
         equity = portfolio.equity(prices)
         cash_floor = equity * self.config.min_cash_pct
+        committed_cash: float = 0.0   # cash reserved by earlier orders in this batch
+        new_positions: int = 0        # positions opened by earlier orders in this batch
 
         for signal in signals:
             price = prices.get(signal.symbol)
@@ -42,11 +49,17 @@ class RiskManager:
             if signal.direction == Direction.FLAT:
                 order = self._build_close_order(signal, portfolio)
             elif signal.direction == Direction.LONG:
-                order = self._build_long_order(signal, portfolio, price, equity, cash_floor)
+                order = self._build_long_order(
+                    signal, portfolio, price, equity, cash_floor,
+                    committed_cash, new_positions,
+                )
             else:
                 continue
 
             if order:
+                if order.side == Side.BUY:
+                    committed_cash += order.quantity * price
+                    new_positions += 1
                 logger.debug("Order queued: %s", order)
                 orders.append(order)
 
@@ -70,12 +83,16 @@ class RiskManager:
         price: float,
         equity: float,
         cash_floor: float,
+        committed_cash: float,
+        new_positions: int,
     ) -> Optional[Order]:
         pos = portfolio.get_position(signal.symbol)
         if pos and pos.quantity > 0:
             return None  # already long, skip
 
-        if len(portfolio.positions) >= self.config.max_positions:
+        # Account for positions already queued in this same batch
+        total_positions = len(portfolio.positions) + new_positions
+        if total_positions >= self.config.max_positions:
             logger.warning(
                 "Max positions (%d) reached — skipping %s",
                 self.config.max_positions, signal.symbol,
@@ -89,8 +106,8 @@ class RiskManager:
             max_value = equity * self.config.max_position_pct
             qty = int(max_value / price)
 
-        # Constrain by available cash above the floor
-        available = portfolio.cash - cash_floor
+        # Constrain by cash still available after earlier orders in this batch
+        available = portfolio.cash - cash_floor - committed_cash
         qty = min(qty, int(available / price))
 
         if qty <= 0:

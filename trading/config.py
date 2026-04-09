@@ -16,6 +16,17 @@ class AlpacaConfig:
         default_factory=lambda: os.getenv("ALPACA_PAPER", "true").lower() == "true"
     )
 
+    def validate(self) -> None:
+        """Raise ValueError early if credentials are missing."""
+        if not self.api_key:
+            raise ValueError(
+                "ALPACA_API_KEY is not set. Add it to your .env file."
+            )
+        if not self.secret_key:
+            raise ValueError(
+                "ALPACA_SECRET_KEY is not set. Add it to your .env file."
+            )
+
 
 @dataclass
 class BacktestConfig:
