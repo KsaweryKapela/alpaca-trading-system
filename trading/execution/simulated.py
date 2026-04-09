@@ -30,6 +30,7 @@ class SimulatedExecutor(Executor):
         orders: List[Order],
         prices: Dict[str, float],
         volumes: Optional[Dict[str, float]] = None,
+        bar_time=None,
     ) -> List[Order]:
         for order in orders:
             price = prices.get(order.symbol)
@@ -59,9 +60,9 @@ class SimulatedExecutor(Executor):
             fill_price = price + slippage if order.side == Side.BUY else price - slippage
 
             order.fill_price = round(fill_price, 4)
-            # Use the order's creation timestamp (= bar time) so that
-            # extended_metrics() can compute accurate trade durations.
-            order.filled_at = order.created_at
+            # Use bar_time (the fill bar's timestamp) so extended_metrics()
+            # can compute accurate trade durations across bars.
+            order.filled_at = bar_time or order.created_at
             order.commission = round(order.quantity * self.config.commission_per_share, 4)
             order.status = OrderStatus.FILLED
 

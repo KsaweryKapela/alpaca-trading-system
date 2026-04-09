@@ -11,10 +11,10 @@ I read this at the start of every session to know where I am and what to do next
 
 > **Update this section at the end of every session.**
 
-- **Active strategy:** VWAP mean reversion (Run 003)
+- **Active strategy:** RSI mean reversion daily (Run 005)
 - **Phase:** Not yet started
-- **Last run:** 002 — ORB with volume + regime filter — REJECTED (−0.37%, Sharpe −1.05, win rate 31.7%)
-- **Next action:** Implement VWAP mean reversion in `trading/strategy/vwap_reversion.py`, run backtest on SPY with 5m Alpaca bars 2025-01-01 → 2026-01-01. Log in `experiments/runs/003_vwap_reversion.md`.
+- **Last run:** 004 — SMA 20/50 daily SPY+QQQ 2015-2026 — PROMISING (Sharpe 0.69, PF 3.32, +21.58%)
+- **Next action:** Research RSI daily reversion, implement `trading/strategy/rsi_reversion.py`, run backtest SPY+QQQ daily 2015-2026. Log in `experiments/runs/005_rsi_reversion.md`.
 
 ---
 
@@ -23,26 +23,41 @@ I read this at the start of every session to know where I am and what to do next
 Each cycle follows these steps in order. Do not skip steps.
 
 ```
-1. PICK    → Choose one strategy idea. Write down the hypothesis before touching code.
+1. RESEARCH → Before picking a strategy, synthesize what the previous run taught us.
+               Ask: what market behaviour did we observe? what failed and why?
+               Use web search to cross-check ideas against known academic/practitioner
+               literature (e.g. "VWAP reversion edge academic" or "5m ORB SPY edge 2023").
+               Summarise findings in the ## Next Step block of the previous run note,
+               or in a dedicated ## Research section if there is no prior run.
+               Only pick a strategy once the reasoning is written down.
+
+2. PICK    → Choose one strategy idea. Write down the hypothesis before touching code.
               Log the hypothesis immediately in the run note and `experiments/STATUS.md`.
-2. BUILD   → Implement or adapt only the minimum code needed to run a valid backtest.
+
+3. BUILD   → Implement or adapt only the minimum code needed to run a valid backtest.
               Do not build deployment or paper-trading workflow in this step.
               Log exactly what was added or changed before moving on.
-3. TEST    → Run backtest. Use at least 2 years of data when the source allows it.
+
+4. TEST    → Run backtest. Use at least 2 years of data when the source allows it.
               Test on 2+ symbols or 2+ distinct windows.
               Log configuration and raw results immediately after each test run.
-4. FIX     → If you notice a bug, data issue, metric bug, execution flaw, or invalid assumption,
-              fix it before continuing. Log the issue, the root cause, and the fix immediately.
-5. EVAL    → Score against candidate criteria (see Section 4). Review ALL extended metrics
+
+5. FIX     → If you notice a bug, data issue, metric bug, execution flaw, or invalid
+              assumption, fix it before continuing.
+              Log the issue, the root cause, and the fix immediately.
+
+6. EVAL    → Score against candidate criteria (see Section 4). Review ALL extended metrics
               (win rate, profit factor, expectancy, max consec losses, avg duration).
               For intraday strategies: run walk_forward() and check avg test Sharpe ≥ 0.3.
               Log the evaluation before making a decision.
-6. DECIDE  → Reject / Revise / Mark as promising candidate.
+
+7. DECIDE  → Reject / Revise / Mark as promising candidate.
               Log the decision and the exact reason immediately.
-7. REPEAT  → Pick the next strategy. Go back to step 1.
+
+8. REPEAT  → Go back to step 1. Do not stop between cycles.
 ```
 
-For now, stop after step 6.  
+Do not stop between cycles unless a strategy is marked **Promising** and needs human review before the next step. Otherwise keep running.  
 No paper trading or live deployment is part of the current loop.
 
 ---

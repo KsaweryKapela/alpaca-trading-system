@@ -15,9 +15,11 @@ Sharpe is computed on daily returns (equity curve resampled to calendar days)
 so the annualization factor is always √252, regardless of bar frequency.
 """
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -34,9 +36,15 @@ logger = logging.getLogger(__name__)
 
 
 class BacktestResult:
-    def __init__(self, portfolio: Portfolio, equity_curve: pd.Series) -> None:
+    def __init__(
+        self,
+        portfolio: Portfolio,
+        equity_curve: pd.Series,
+        metadata: Optional[dict] = None,
+    ) -> None:
         self.portfolio = portfolio
         self.equity_curve = equity_curve
+        self.metadata = metadata or {}
 
     def metrics(self) -> dict:
         ec = self.equity_curve
@@ -130,6 +138,133 @@ class BacktestResult:
             ),
         }
 
+    def round_trips(self) -> List[dict]:
+        """Return detailed round-trip records for dashboard/report export."""
+        by_symbol: Dict[str, list] = defaultdict(list)
+        for order in self.portfolio.filled_orders:
+            if order.is_filled:
+                by_symbol[order.symbol].append(order)
+
+        round_trips: List[dict] = []
+        for symbol, orders in by_symbol.items():
+            buys = sorted(
+                [o for o in orders if o.side == Side.BUY],
+                key=lambda o: o.filled_at or o.created_at,
+            )
+            sells = sorted(
+                [o for o in orders if o.side == Side.SELL],
+                key=lambda o: o.filled_at or o.created_at,
+            )
+            for buy, sell in zip(buys, sells):
+                qty = min(buy.quantity, sell.quantity)
+                buy_fill = buy.fill_price or 0.0
+                sell_fill = sell.fill_price or 0.0
+                pnl = qty * (sell_fill - buy_fill) - buy.commission - sell.commission
+                entry_ts = buy.filled_at or buy.created_at
+                exit_ts = sell.filled_at or sell.created_at
+                duration_s = (exit_ts - entry_ts).total_seconds()
+                basis = qty * buy_fill
+                round_trips.append(
+                    {
+                        "symbol": symbol,
+                        "quantity": qty,
+                        "entry_at": entry_ts.isoformat(),
+                        "exit_at": exit_ts.isoformat(),
+                        "entry_price": round(buy_fill, 4),
+                        "exit_price": round(sell_fill, 4),
+                        "entry_commission": round(buy.commission, 4),
+                        "exit_commission": round(sell.commission, 4),
+                        "pnl": round(pnl, 2),
+                        "return_pct": round((pnl / basis) * 100, 3) if basis else None,
+                        "duration_hours": round(duration_s / 3600, 2),
+                        "won": pnl > 0,
+                    }
+                )
+
+        return sorted(round_trips, key=lambda trade: trade["exit_at"])
+
+    def report_dict(self) -> dict:
+        """Serialize the run into a machine-readable report for the dashboard."""
+        metrics = self.metrics()
+        extended = self.extended_metrics()
+        round_trips = self.round_trips()
+        equity = self.equity_curve.dropna().sort_index()
+        daily_ec = equity.resample("D").last().dropna()
+        prev_daily = daily_ec.shift(1)
+        monthly_ec = daily_ec.resample("ME").last().dropna()
+        prev_monthly = monthly_ec.shift(1)
+
+        daily = []
+        for ts, value in daily_ec.items():
+            prev_value = prev_daily.loc[ts]
+            pnl = None if pd.isna(prev_value) else round(value - prev_value, 2)
+            ret = None
+            if not pd.isna(prev_value) and prev_value:
+                ret = round((value / prev_value - 1) * 100, 3)
+            daily.append(
+                {
+                    "date": ts.date().isoformat(),
+                    "equity": round(float(value), 2),
+                    "pnl": pnl,
+                    "return_pct": ret,
+                }
+            )
+
+        monthly = []
+        for ts, value in monthly_ec.items():
+            prev_value = prev_monthly.loc[ts]
+            ret = None
+            if not pd.isna(prev_value) and prev_value:
+                ret = round((value / prev_value - 1) * 100, 3)
+            monthly.append(
+                {
+                    "month": ts.strftime("%Y-%m"),
+                    "equity": round(float(value), 2),
+                    "return_pct": ret,
+                }
+            )
+
+        fills = []
+        for order in self.portfolio.filled_orders:
+            if not order.is_filled:
+                continue
+            fills.append(
+                {
+                    "id": order.id,
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "quantity": order.quantity,
+                    "created_at": order.created_at.isoformat(),
+                    "filled_at": (order.filled_at or order.created_at).isoformat(),
+                    "fill_price": round(order.fill_price or 0.0, 4),
+                    "commission": round(order.commission, 4),
+                }
+            )
+
+        return {
+            "metadata": self.metadata,
+            "metrics": metrics,
+            "extended_metrics": extended,
+            "equity_curve": [
+                {
+                    "timestamp": ts.isoformat(),
+                    "equity": round(float(value), 2),
+                }
+                for ts, value in equity.items()
+            ],
+            "daily": daily,
+            "monthly": monthly,
+            "fills": fills,
+            "round_trips": round_trips,
+        }
+
+    def export_json(self, path: Path) -> Path:
+        """Write a structured report JSON for dashboard consumption."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(self.report_dict(), handle, indent=2)
+        return path
+
     def print_summary(self) -> None:
         m = self.metrics()
         x = self.extended_metrics()
@@ -192,7 +327,26 @@ class BacktestEngine:
         if not symbol_dfs:
             raise ValueError("No data loaded — check symbols and date range.")
 
-        return self._run_with_dfs(strategy, symbol_dfs)
+        result = self._run_with_dfs(strategy, symbol_dfs)
+        result.metadata.update(
+            {
+                "strategy": strategy.__class__.__name__,
+                "symbols": symbols,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "data_source": data_source,
+                "interval": interval,
+                "initial_cash": self.config.backtest.initial_cash,
+                "commission_per_share": self.config.backtest.commission_per_share,
+                "slippage_bps": self.config.backtest.slippage_bps,
+                "max_volume_pct": self.config.backtest.max_volume_pct,
+                "max_position_pct": self.config.risk.max_position_pct,
+                "max_positions": self.config.risk.max_positions,
+                "min_cash_pct": self.config.risk.min_cash_pct,
+                "max_daily_loss_pct": self.config.risk.max_daily_loss_pct,
+            }
+        )
+        return result
 
     def _run_with_dfs(
         self,
@@ -223,16 +377,22 @@ class BacktestEngine:
                 self.risk.new_day(portfolio.equity(close_prices))
                 _last_date = bar_date
 
-            # Step 1: Fill orders queued from previous bar at today's open
+            # Step 1: Fill orders queued from previous bar at today's open.
+            # Pass bar_time so SimulatedExecutor stamps filled_at with the
+            # actual fill-bar timestamp (enables accurate trade duration metrics).
             if pending_orders:
-                filled = self.executor.execute(pending_orders, open_prices, volumes)
+                filled = self.executor.execute(pending_orders, open_prices, volumes, bar_time=ts)
                 for order in filled:
                     portfolio.apply_fill(order)
                 pending_orders = []
 
-            # Step 2: Generate signals from today's close; queue for next bar
+            # Step 2: Generate signals from today's close; queue for next bar.
+            # Override Order.created_at with the signal-bar timestamp so
+            # round-trip duration = filled_at(exit) - created_at(entry).
             signals = strategy.on_bar(bars, portfolio)
             pending_orders = self.risk.validate(signals, portfolio, close_prices)
+            for order in pending_orders:
+                order.created_at = ts
 
             # Step 3: Record end-of-day equity (positions valued at close)
             equity_timestamps.append(ts)
