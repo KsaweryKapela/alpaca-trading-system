@@ -84,19 +84,21 @@ class BacktestEngine:
         start: datetime,
         end: datetime,
         data_source: str = "yfinance",
+        interval: str = "1d",
     ) -> BacktestResult:
         logger.info(
-            "Backtest: symbols=%s  %s → %s  source=%s",
-            symbols, start.date(), end.date(), data_source,
+            "Backtest: symbols=%s  %s → %s  source=%s  interval=%s",
+            symbols, start.date(), end.date(), data_source, interval,
         )
 
         if data_source == "alpaca":
             symbol_dfs = load_bars_alpaca(
                 symbols, start, end,
                 self.config.alpaca.api_key, self.config.alpaca.secret_key,
+                interval=interval,
             )
         else:
-            symbol_dfs = load_bars_yfinance(symbols, start, end)
+            symbol_dfs = load_bars_yfinance(symbols, start, end, interval=interval)
 
         if not symbol_dfs:
             raise ValueError("No data loaded — check symbols and date range.")

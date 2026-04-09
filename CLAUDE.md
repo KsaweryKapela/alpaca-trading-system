@@ -10,10 +10,10 @@ I read this at the start of every session to know where I am and what to do next
 
 > **Update this section at the end of every session.**
 
-- **Active strategy:** SMA Crossover (SMA20/50)
-- **Phase:** Backtest — not yet run
-- **Last run:** —
-- **Next action:** Run backtest on SMA20/50 across AAPL, MSFT, SPY for 2020–2024. Log results in `experiments/runs/001_sma_cross.md`.
+- **Active strategy:** ORB with volume + regime filter (Run 002)
+- **Phase:** Not yet started
+- **Last run:** 001 — ORB base config — REJECTED (−1.08%, Sharpe −0.04)
+- **Next action:** Implement volume filter + regime filter in `trading/strategy/orb.py`, run backtest on SPY with 5m Alpaca bars 2025-01-01 → 2026-01-01. Log in `experiments/runs/002_orb_filtered.md`.
 
 ---
 
@@ -27,7 +27,8 @@ Each cycle follows these steps in order. Do not skip steps.
 3. TEST    → Run backtest. Use at least 2 years of data. Test on 2+ symbols.
 4. EVAL    → Score against promotion criteria (see Section 4). Be honest.
 5. DECIDE  → Reject / Revise / Promote to paper trading.
-6. LOG     → Write the run note in experiments/runs/. No exceptions.
+6. LOG     → Write the run note as soon as the FIRST result lands — not after variants.
+              Variants are appended as ## Run 2, ## Run 3 in the same file after logging.
 7. REPEAT  → Pick the next strategy. Go back to step 1.
 ```
 
@@ -153,9 +154,8 @@ Write this before running any code.
 | Final equity | |
 
 Paste full output here:
-```
-(output)
-```
+
+    (output)
 
 ## Evaluation
 
@@ -238,7 +238,51 @@ Do not carry forward vague intentions. The `Next Step` field in every run note m
 
 ---
 
-## 9. Reminders
+## 9. Realistic Scope of This System
+
+This is a **bar-based rule-driven system**, not an HFT platform.
+
+**What it can do well:**
+- Rule-based strategies on 1m/5m/1h/daily bars
+- Backtest, paper trade, and live trade with shared strategy code
+- ETFs (SPY, QQQ) and highly liquid large-caps (AAPL, MSFT, NVDA)
+- Intraday strategies that hold through the session and flatten by EOD
+- Daily and multi-day swing strategies
+
+**What it is NOT built for:**
+- Sub-second or tick-by-tick execution (needs a different stack)
+- Order book / Level 2 strategies
+- News-driven or latency-sensitive plays
+- Low-float momentum, options, multi-leg stat-arb
+- Strategies that depend on millisecond timing or co-location
+
+**Recommended strategy families for fast feedback:**
+
+| Strategy | Interval | Why it works here |
+|---|---|---|
+| Opening Range Breakout (ORB) | 5m | Simple rules, daily decision, clear exit |
+| VWAP mean reversion | 5m | Common intraday structure, many samples |
+| Gap-and-go / gap-fade | Daily or 5m | One clean window per day |
+| ETF intraday trend (SPY/QQQ) | 5m | Liquid, low single-name risk |
+| SMA crossover | Daily | Slow but clean, good baseline |
+
+**Start here (in order):**
+1. SPY / QQQ — cleanest liquidity, fewest idiosyncratic risks
+2. One setup at a time — ORB or VWAP, not both simultaneously
+3. Fixed rules before the first backtest — no tuning until after first results
+4. Measure after costs — slippage and commission already baked in (5bps + $0.005/share)
+
+**PDT rule (US traders):** Four or more day trades in five business days in a
+margin account with < $25k equity triggers Pattern Day Trader requirements.
+Paper trading with ETFs on this system avoids PDT concerns entirely.
+
+**Backtest overfitting warning:** More variants = higher chance of false positives.
+Fix the rules first, run once, accept the result. If you tweak parameters until
+it looks good, the result is not a strategy — it is a curve fit.
+
+---
+
+## 10. Reminders
 
 - **Start simple.** A strategy that has 3 clear rules beats a strategy with 10 tuned parameters.
 - **Test period must include a bear market or volatile period**, not just a bull run.

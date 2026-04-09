@@ -61,8 +61,15 @@ def load_bars_alpaca(
     end: datetime,
     api_key: str,
     secret_key: str,
+    interval: str = "1d",
 ) -> Dict[str, pd.DataFrame]:
-    """Download OHLCV bars from Alpaca historical data API."""
+    """Download OHLCV bars from Alpaca historical data API.
+
+    Args:
+        interval: Bar size — "1m", "5m", "15m", "30m", "1h", "1d".
+                  Intraday data requires valid Alpaca credentials.
+                  Free (IEX) feed has limited intraday history; SIP feed has full history.
+    """
     if not api_key or not secret_key:
         raise ValueError(
             "Alpaca credentials required for --data-source alpaca. "
@@ -71,12 +78,24 @@ def load_bars_alpaca(
 
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+    _TF_MAP = {
+        "1m":  TimeFrame.Minute,
+        "5m":  TimeFrame(5,  TimeFrameUnit.Minute),
+        "15m": TimeFrame(15, TimeFrameUnit.Minute),
+        "30m": TimeFrame(30, TimeFrameUnit.Minute),
+        "1h":  TimeFrame.Hour,
+        "1d":  TimeFrame.Day,
+    }
+    timeframe = _TF_MAP.get(interval)
+    if timeframe is None:
+        raise ValueError(f"Unsupported interval '{interval}'. Choose from: {list(_TF_MAP)}")
 
     client = StockHistoricalDataClient(api_key, secret_key)
     request = StockBarsRequest(
         symbol_or_symbols=symbols,
-        timeframe=TimeFrame.Day,
+        timeframe=timeframe,
         start=start,
         end=end,
     )
