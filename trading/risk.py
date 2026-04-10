@@ -1,10 +1,11 @@
 """Risk manager: converts signals into sized, validated orders.
 
 Rules enforced:
-  - Max position size as % of total equity
+  - Max position size as % of total equity (scaled by leverage)
   - Max number of concurrent open positions
-  - Minimum cash buffer (never go fully invested)
-  - No re-entry if already in the position
+  - Minimum cash buffer (long entries only; short entries use proceeds)
+  - No re-entry if already in the same direction
+  - Daily loss limit kill-switch (blocks new entries, allows exits)
 """
 
 import logging
@@ -19,16 +20,15 @@ logger = logging.getLogger(__name__)
 
 
 class RiskManager:
-    def __init__(self, config: RiskConfig) -> None:
+    def __init__(self, config: RiskConfig, leverage: float = 1.0) -> None:
         self.config = config
+        self.leverage = leverage  # 1.0 = no leverage; 2.0 = 2x
         self._day_start_equity: float = 0.0
 
     def new_day(self, equity: float) -> None:
-        """Record equity at the start of a new trading day for loss-limit tracking."""
         self._day_start_equity = equity
 
     def is_halted(self, portfolio: Portfolio, prices: Dict[str, float]) -> bool:
-        """Return True if the daily loss limit has been breached."""
         if self.config.max_daily_loss_pct <= 0 or self._day_start_equity <= 0:
             return False
         equity = portfolio.equity(prices)
@@ -41,15 +41,6 @@ class RiskManager:
         portfolio: Portfolio,
         prices: Dict[str, float],
     ) -> List[Order]:
-        """Convert signals into orders, applying position sizing and risk rules.
-
-        Tracks cash committed and positions opened within the same batch so
-        that multiple simultaneous buy signals cannot together exceed the
-        intended cash buffer or position limits.
-
-        When the daily loss limit is breached, new long entries are blocked.
-        Exit signals (FLAT) are always allowed through.
-        """
         if self.is_halted(portfolio, prices):
             logger.warning("Daily loss limit breached — blocking new entries")
             signals = [s for s in signals if s.direction == Direction.FLAT]
@@ -59,8 +50,8 @@ class RiskManager:
         orders: List[Order] = []
         equity = portfolio.equity(prices)
         cash_floor = equity * self.config.min_cash_pct
-        committed_cash: float = 0.0   # cash reserved by earlier orders in this batch
-        new_positions: int = 0        # positions opened by earlier orders in this batch
+        committed_cash: float = 0.0
+        new_positions: int = 0
 
         for signal in signals:
             price = prices.get(signal.symbol)
@@ -75,13 +66,19 @@ class RiskManager:
                     signal, portfolio, price, equity, cash_floor,
                     committed_cash, new_positions,
                 )
+                if order:
+                    committed_cash += order.quantity * price
+                    new_positions += 1
+            elif signal.direction == Direction.SHORT:
+                order = self._build_short_order(
+                    signal, portfolio, price, equity, new_positions,
+                )
+                if order:
+                    new_positions += 1
             else:
                 continue
 
             if order:
-                if order.side == Side.BUY:
-                    committed_cash += order.quantity * price
-                    new_positions += 1
                 logger.debug("Order queued: %s", order)
                 orders.append(order)
 
@@ -91,44 +88,37 @@ class RiskManager:
         pos = portfolio.get_position(signal.symbol)
         if not pos or pos.quantity == 0:
             return None
-        return Order(
-            symbol=signal.symbol,
-            side=Side.SELL if pos.quantity > 0 else Side.BUY,
-            quantity=abs(pos.quantity),
-            created_at=datetime.now(timezone.utc),
-        )
+        if pos.quantity > 0:
+            # Close long: sell
+            return Order(
+                symbol=signal.symbol, side=Side.SELL, quantity=abs(pos.quantity),
+                created_at=datetime.now(timezone.utc),
+            )
+        else:
+            # Cover short: buy
+            return Order(
+                symbol=signal.symbol, side=Side.BUY, quantity=abs(pos.quantity),
+                created_at=datetime.now(timezone.utc), is_short_cover=True,
+            )
 
     def _build_long_order(
-        self,
-        signal: Signal,
-        portfolio: Portfolio,
-        price: float,
-        equity: float,
-        cash_floor: float,
-        committed_cash: float,
-        new_positions: int,
+        self, signal, portfolio, price, equity, cash_floor, committed_cash, new_positions,
     ) -> Optional[Order]:
         pos = portfolio.get_position(signal.symbol)
         if pos and pos.quantity > 0:
-            return None  # already long, skip
+            return None  # already long
 
-        # Account for positions already queued in this same batch
         total_positions = len(portfolio.positions) + new_positions
         if total_positions >= self.config.max_positions:
-            logger.warning(
-                "Max positions (%d) reached — skipping %s",
-                self.config.max_positions, signal.symbol,
-            )
+            logger.warning("Max positions reached — skipping %s", signal.symbol)
             return None
 
-        # Determine quantity
         if signal.quantity:
             qty = signal.quantity
         else:
-            max_value = equity * self.config.max_position_pct
+            max_value = equity * self.config.max_position_pct * self.leverage
             qty = int(max_value / price)
 
-        # Constrain by cash still available after earlier orders in this batch
         available = portfolio.cash - cash_floor - committed_cash
         qty = min(qty, int(available / price))
 
@@ -137,8 +127,33 @@ class RiskManager:
             return None
 
         return Order(
-            symbol=signal.symbol,
-            side=Side.BUY,
-            quantity=qty,
+            symbol=signal.symbol, side=Side.BUY, quantity=qty,
             created_at=datetime.now(timezone.utc),
+        )
+
+    def _build_short_order(
+        self, signal, portfolio, price, equity, new_positions,
+    ) -> Optional[Order]:
+        pos = portfolio.get_position(signal.symbol)
+        if pos and pos.quantity < 0:
+            return None  # already short
+
+        total_positions = len(portfolio.positions) + new_positions
+        if total_positions >= self.config.max_positions:
+            logger.warning("Max positions reached — skipping %s", signal.symbol)
+            return None
+
+        if signal.quantity:
+            qty = signal.quantity
+        else:
+            max_value = equity * self.config.max_position_pct * self.leverage
+            qty = int(max_value / price)
+
+        if qty <= 0:
+            logger.warning("Zero quantity for short %s — skipping", signal.symbol)
+            return None
+
+        return Order(
+            symbol=signal.symbol, side=Side.SELL, quantity=qty,
+            created_at=datetime.now(timezone.utc), is_short_entry=True,
         )

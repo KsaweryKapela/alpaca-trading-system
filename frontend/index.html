@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strategy Research — Experiment Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+
+    <!-- Header -->
+    <header class="header">
+      <h1>Strategy Research</h1>
+      <div class="header-right">
+        <span class="header-hint">Experiments are run by Claude via <code>run_experiment.py</code></span>
+        <button id="refreshBtn" class="refresh-btn" title="Reload experiment list">↺ Refresh</button>
+      </div>
+    </header>
+
+    <!-- Experiment list -->
+    <section class="panel exp-list-panel">
+      <div class="exp-list-header">
+        <h2>Experiments</h2>
+        <span id="expCount" class="count-badge"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="expTable">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Slug</th>
+              <th>Strategy</th>
+              <th>Assets</th>
+              <th>Interval</th>
+              <th>Return</th>
+              <th>Monthly</th>
+              <th>Sharpe</th>
+              <th>DD</th>
+              <th>Fills</th>
+              <th>Win%</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="expBody">
+            <tr><td colspan="12" class="empty-msg">No experiments found. Run one with <code>run_experiment.py</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Active experiment view -->
+    <div id="expView" class="hidden">
+
+      <!-- Experiment header bar -->
+      <div class="exp-header-bar panel">
+        <div class="exp-title">
+          <span id="expSlug" class="exp-slug"></span>
+          <span id="expStatusBadge" class="status-badge"></span>
+        </div>
+        <!-- Asset filter — filters the view, not a re-run -->
+        <div class="asset-filter">
+          <span class="filter-label">Show assets:</span>
+          <div id="assetFilterChips" class="asset-chips"></div>
+          <button class="chip-btn" onclick="filterAll()">All</button>
+          <button class="chip-btn" onclick="filterNone()">None</button>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <section class="panel metrics-panel">
+        <div id="metricsGrid" class="metrics-grid"></div>
+      </section>
+
+      <!-- Calendar -->
+      <section class="panel calendar-panel">
+        <h2>Trade Calendar</h2>
+        <p class="calendar-hint">Hover over a highlighted day to see that day's trades.</p>
+        <div id="calendarView" class="calendar-view"></div>
+      </section>
+
+      <!-- Tooltip (positioned by JS) -->
+      <div id="tooltip" class="tooltip hidden"></div>
+
+      <!-- Rules -->
+      <section class="panel rules-panel">
+        <h2>Strategy Rules</h2>
+        <ul id="rulesList"></ul>
+      </section>
+
+      <!-- Transactions -->
+      <section class="panel txn-panel">
+        <h2>Daily Transactions</h2>
+        <div class="table-wrap">
+          <table id="txnTable">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Asset</th>
+                <th>Side</th>
+                <th>Size</th>
+                <th>Price</th>
+                <th>PnL</th>
+              </tr>
+            </thead>
+            <tbody id="txnBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div><!-- /expView -->
+
+  </div><!-- /app -->
+  <script src="app.js"></script>
+</body>
+</html>

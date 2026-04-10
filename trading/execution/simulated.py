@@ -1,14 +1,7 @@
 """Simulated order execution for backtesting.
 
-Fills orders at the provided price with configurable slippage and commission.
-
-Execution assumptions:
-  - Fill price = bar close ± slippage (buys worse, sells worse)
-  - Commission = flat per-share fee
-  - No partial fills, no queue priority
-
-For slightly more realistic results, pass next-bar open prices instead of
-current-bar close prices. The engine comment shows how to do this.
+Fills at the next bar's open price with slippage and commission.
+Handles long entries, long exits, short entries, and short covers.
 """
 
 import logging
@@ -39,29 +32,24 @@ class SimulatedExecutor(Executor):
                 order.status = OrderStatus.REJECTED
                 continue
 
-            # Cap fill quantity to max_volume_pct of the bar's volume.
-            # Only applied to buys (entries) — never to sells (exits), so that
-            # closing an existing position is never split into partial fills.
-            if order.side == Side.BUY and volumes is not None and self.config.max_volume_pct > 0:
+            # Volume cap: only for long entries (not exits or short entries)
+            is_entry = (order.side == Side.BUY and not order.is_short_cover) or \
+                       (order.side == Side.SELL and order.is_short_entry)
+            if is_entry and volumes is not None and self.config.max_volume_pct > 0:
                 bar_vol = volumes.get(order.symbol, 0)
                 if bar_vol > 0:
                     vol_cap = int(bar_vol * self.config.max_volume_pct)
                     if vol_cap < order.quantity:
-                        logger.debug(
-                            "Volume cap: %s buy reduced %d → %d shares (bar vol=%d)",
-                            order.symbol, order.quantity, vol_cap, int(bar_vol),
-                        )
                         order.quantity = vol_cap
                     if order.quantity <= 0:
                         order.status = OrderStatus.REJECTED
                         continue
 
             slippage = price * self.config.slippage_bps / 10_000
+            # Buys fill higher (worse), sells fill lower (worse for both long exits and short entries)
             fill_price = price + slippage if order.side == Side.BUY else price - slippage
 
             order.fill_price = round(fill_price, 4)
-            # Use bar_time (the fill bar's timestamp) so extended_metrics()
-            # can compute accurate trade durations across bars.
             order.filled_at = bar_time or order.created_at
             order.commission = round(order.quantity * self.config.commission_per_share, 4)
             order.status = OrderStatus.FILLED

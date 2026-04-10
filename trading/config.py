@@ -2,10 +2,20 @@
 
 import os
 from dataclasses import dataclass, field
+from typing import List
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Default asset universe
+STOCKS = ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+ETFS = ["SPY", "QQQ", "IWM", "XLF", "XLE", "XLK"]
+DEFAULT_UNIVERSE = STOCKS + ETFS
+
+# Primary evaluation window
+EVAL_START = "2026-01-01"
+EVAL_END = "2026-04-30"
 
 
 @dataclass
@@ -17,31 +27,26 @@ class AlpacaConfig:
     )
 
     def validate(self) -> None:
-        """Raise ValueError early if credentials are missing."""
         if not self.api_key:
-            raise ValueError(
-                "ALPACA_API_KEY is not set. Add it to your .env file."
-            )
+            raise ValueError("ALPACA_API_KEY is not set. Add it to your .env file.")
         if not self.secret_key:
-            raise ValueError(
-                "ALPACA_SECRET_KEY is not set. Add it to your .env file."
-            )
+            raise ValueError("ALPACA_SECRET_KEY is not set. Add it to your .env file.")
 
 
 @dataclass
 class BacktestConfig:
     initial_cash: float = 100_000.0
-    commission_per_share: float = 0.005   # $0.005/share (IB-style)
+    commission_per_share: float = 0.005   # $0.005/share
     slippage_bps: float = 5.0             # 5 basis points
-    max_volume_pct: float = 0.01          # fill at most 1% of bar volume per order
+    max_volume_pct: float = 0.01          # fill at most 1% of bar volume
 
 
 @dataclass
 class RiskConfig:
-    max_position_pct: float = 0.10   # max 10% of equity per position
-    max_positions: int = 10
-    min_cash_pct: float = 0.05       # keep at least 5% in cash
-    max_daily_loss_pct: float = 0.02  # halt new entries if down ≥2% on the day (0 = disabled)
+    max_position_pct: float = 0.10   # max 10% of equity per position (before leverage)
+    max_positions: int = 20
+    min_cash_pct: float = 0.02       # keep at least 2% cash buffer
+    max_daily_loss_pct: float = 0.0  # disabled by default (0 = off)
 
 
 @dataclass

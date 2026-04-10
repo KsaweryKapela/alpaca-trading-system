@@ -1,14 +1,12 @@
-"""SMA crossover strategy — the canonical rule-based example.
+"""SMA Crossover strategy — long/short.
 
-Signal logic (per symbol):
-  LONG  when fast SMA crosses *above* slow SMA  (bullish crossover)
-  FLAT  when fast SMA crosses *below* slow SMA  (exit signal)
-
-No position management here — that belongs to the risk manager.
+Long when fast SMA > slow SMA (uptrend).
+Short when fast SMA < slow SMA (downtrend).
+Uses daily close prices. Requires slow_period bars of warm-up.
 """
 
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Dict, List
 
 from .base import Strategy
 from ..models import Bar, Direction, Signal
@@ -16,13 +14,10 @@ from ..portfolio import Portfolio
 
 
 class SMACrossStrategy(Strategy):
-    """Moving-average crossover strategy.
+    """SMA crossover: go long or short based on moving average alignment."""
 
-    Args:
-        symbols:      Symbols to watch and potentially trade.
-        fast_period:  Lookback for the fast SMA.
-        slow_period:  Lookback for the slow SMA.
-    """
+    name = "sma_cross"
+    label = "SMA Crossover"
 
     def __init__(
         self,
@@ -31,18 +26,20 @@ class SMACrossStrategy(Strategy):
         slow_period: int = 50,
     ) -> None:
         super().__init__(symbols)
-        if fast_period >= slow_period:
-            raise ValueError(
-                f"fast_period ({fast_period}) must be < slow_period ({slow_period})"
-            )
         self.fast_period = fast_period
         self.slow_period = slow_period
+        self._closes: Dict[str, deque] = {}
 
-        # Per-symbol rolling price windows
-        self._prices: Dict[str, Deque[float]] = {
-            s: deque(maxlen=slow_period) for s in symbols
-        }
-        self._prev_fast_above: Dict[str, Optional[bool]] = {s: None for s in symbols}
+    def on_start(self) -> None:
+        self._closes = {sym: deque(maxlen=self.slow_period) for sym in self.symbols}
+
+    def rules(self) -> List[str]:
+        return [
+            f"Go LONG when {self.fast_period}-day SMA crosses above {self.slow_period}-day SMA",
+            f"Go SHORT when {self.fast_period}-day SMA crosses below {self.slow_period}-day SMA",
+            "Hold until the opposite crossover occurs",
+            "Position sized by portfolio risk manager (max position % of equity)",
+        ]
 
     def on_bar(self, bars: Dict[str, Bar], portfolio: Portfolio) -> List[Signal]:
         signals: List[Signal] = []
@@ -52,31 +49,30 @@ class SMACrossStrategy(Strategy):
             if bar is None:
                 continue
 
-            self._prices[symbol].append(bar.close)
-            prices = list(self._prices[symbol])
+            closes = self._closes[symbol]
+            closes.append(bar.close)
 
-            if len(prices) < self.slow_period:
-                continue  # not enough history yet
+            if len(closes) < self.slow_period:
+                continue
 
-            fast_sma = sum(prices[-self.fast_period:]) / self.fast_period
-            slow_sma = sum(prices) / self.slow_period
-            fast_above = fast_sma > slow_sma
+            closes_list = list(closes)
+            fast_sma = sum(closes_list[-self.fast_period:]) / self.fast_period
+            slow_sma = sum(closes_list) / self.slow_period
 
-            prev = self._prev_fast_above[symbol]
-            if prev is not None:
-                if fast_above and not prev:
-                    signals.append(Signal(
-                        symbol=symbol,
-                        direction=Direction.LONG,
-                        reason=f"SMA{self.fast_period} crossed above SMA{self.slow_period}",
-                    ))
-                elif not fast_above and prev:
-                    signals.append(Signal(
-                        symbol=symbol,
-                        direction=Direction.FLAT,
-                        reason=f"SMA{self.fast_period} crossed below SMA{self.slow_period}",
-                    ))
+            pos = portfolio.get_position(symbol)
+            current_qty = pos.quantity if pos else 0
 
-            self._prev_fast_above[symbol] = fast_above
+            if fast_sma > slow_sma:
+                if current_qty <= 0:
+                    if current_qty < 0:
+                        # Cover short first
+                        signals.append(Signal(symbol, Direction.FLAT, reason="cover short"))
+                    signals.append(Signal(symbol, Direction.LONG, reason=f"SMA{self.fast_period}>{self.slow_period}"))
+            elif fast_sma < slow_sma:
+                if current_qty >= 0:
+                    if current_qty > 0:
+                        # Close long first
+                        signals.append(Signal(symbol, Direction.FLAT, reason="close long"))
+                    signals.append(Signal(symbol, Direction.SHORT, reason=f"SMA{self.fast_period}<{self.slow_period}"))
 
         return signals

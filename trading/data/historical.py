@@ -92,23 +92,40 @@ def load_bars_alpaca(
     if timeframe is None:
         raise ValueError(f"Unsupported interval '{interval}'. Choose from: {list(_TF_MAP)}")
 
+    from .cache import load_cached, save_to_cache
+
+    dfs: Dict[str, pd.DataFrame] = {}
+    symbols_to_fetch: List[str] = []
+
+    for symbol in symbols:
+        cached = load_cached(symbol, start, end, interval)
+        if cached is not None and not cached.empty:
+            dfs[symbol] = cached
+        else:
+            symbols_to_fetch.append(symbol)
+
+    if not symbols_to_fetch:
+        return dfs
+
     client = StockHistoricalDataClient(api_key, secret_key)
     request = StockBarsRequest(
-        symbol_or_symbols=symbols,
+        symbol_or_symbols=symbols_to_fetch,
         timeframe=timeframe,
         start=start,
         end=end,
+        feed="iex",
     )
     barset = client.get_stock_bars(request)
     raw_df = barset.df  # MultiIndex (symbol, timestamp)
 
-    dfs: Dict[str, pd.DataFrame] = {}
-    for symbol in symbols:
+    for symbol in symbols_to_fetch:
         try:
             sdf = raw_df.loc[symbol].copy()
             sdf.index = pd.to_datetime(sdf.index, utc=True)
             sdf.columns = [c.capitalize() for c in sdf.columns]
-            dfs[symbol] = sdf[["Open", "High", "Low", "Close", "Volume"]]
+            sdf = sdf[["Open", "High", "Low", "Close", "Volume"]]
+            dfs[symbol] = sdf
+            save_to_cache(symbol, interval, sdf)
             logger.info("Loaded %d bars for %s (Alpaca)", len(sdf), symbol)
         except KeyError:
             logger.warning("No Alpaca data for %s", symbol)

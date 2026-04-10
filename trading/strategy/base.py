@@ -1,13 +1,4 @@
-"""Base class for all trading strategies.
-
-A strategy is a stateful object that:
-  1. Receives bars on each timestep
-  2. Maintains its own internal state (indicators, history, etc.)
-  3. Returns a list of signals
-
-Strategies must not place orders directly — they only return signals.
-The risk manager and executor handle sizing and execution.
-"""
+"""Base class for all trading strategies."""
 
 from abc import ABC, abstractmethod
 from typing import Dict, List
@@ -22,22 +13,17 @@ class Strategy(ABC):
 
     @abstractmethod
     def on_bar(self, bars: Dict[str, Bar], portfolio: Portfolio) -> List[Signal]:
-        """Process a new timestep and return trading signals.
+        """Process a new bar and return signals. Return [] for no action."""
 
-        Args:
-            bars: Available bars keyed by symbol. Not all symbols are
-                  guaranteed to be present (halts, data gaps).
-            portfolio: Current portfolio state. Treat as read-only.
-
-        Returns:
-            List of Signal objects. Return [] for no action.
-        """
+    @abstractmethod
+    def rules(self) -> List[str]:
+        """Return human-readable list of strategy rules for the frontend."""
 
     def on_start(self) -> None:
-        """Called once before the first bar. Override for initialization."""
+        """Called once before the first bar."""
 
     def on_stop(self) -> None:
-        """Called once after the last bar. Override for cleanup/reporting."""
+        """Called once after the last bar."""
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(symbols={self.symbols})"

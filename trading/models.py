@@ -9,6 +9,7 @@ from typing import Optional
 
 class Direction(Enum):
     LONG = "long"
+    SHORT = "short"
     FLAT = "flat"   # exit / close position
 
 
@@ -54,6 +55,9 @@ class Order:
     fill_price: Optional[float] = None
     filled_at: Optional[datetime] = None
     commission: float = 0.0
+    # Tag so we know if this is an entry or exit for a short position
+    is_short_entry: bool = False   # True = opening a short (SELL to open)
+    is_short_cover: bool = False   # True = covering a short (BUY to close)
 
     @property
     def is_filled(self) -> bool:
@@ -69,14 +73,25 @@ class Order:
 @dataclass
 class Position:
     symbol: str
-    quantity: int       # positive = long
+    quantity: int       # positive = long, negative = short
     avg_price: float
 
+    @property
+    def is_long(self) -> bool:
+        return self.quantity > 0
+
+    @property
+    def is_short(self) -> bool:
+        return self.quantity < 0
+
     def market_value(self, price: float) -> float:
+        """For long: positive. For short: negative (liability)."""
         return self.quantity * price
 
     def unrealized_pnl(self, price: float) -> float:
+        """Works for both long and short."""
         return self.quantity * (price - self.avg_price)
 
     def __repr__(self) -> str:
-        return f"Position({self.symbol}: {self.quantity} @ ${self.avg_price:.2f})"
+        side = "LONG" if self.quantity > 0 else "SHORT"
+        return f"Position({self.symbol}: {side} {abs(self.quantity)} @ ${self.avg_price:.2f})"

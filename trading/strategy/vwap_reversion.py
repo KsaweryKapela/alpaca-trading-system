@@ -1,89 +1,75 @@
-"""VWAP Mean Reversion strategy.
+"""VWAP Mean Reversion — intraday, same-day close.
 
-Rules (per symbol, per day):
-  1. Compute intraday VWAP bar by bar from market open.
-     VWAP = Σ(typical_price × volume) / Σ(volume)
-     typical_price = (high + low + close) / 3
-  2. Skip the first `entry_start` minutes (opening noise distorts VWAP).
-  3. When close < VWAP × (1 − entry_dev) and no position held:
-       → emit LONG signal. Record entry_price.
-  4. While in position:
-       a. If close ≥ VWAP → emit FLAT (target: revert to VWAP).
-       b. If close < entry_price × (1 − stop_pct) → emit FLAT (stop loss).
-       c. At or after exit_time → emit FLAT (EOD flatten).
-  5. One trade per symbol per day. Long-only.
+Rules:
+  1. Calculate running VWAP from market open each day.
+  2. Entry window: market open through `entry_end_hour` ET (default 14:00).
+  3. Go LONG when close < VWAP × (1 − entry_dev_pct / 100).
+  4. Go SHORT when close > VWAP × (1 + entry_dev_pct / 100).
+  5. Exit LONG when close >= VWAP (price returns to fair value).
+  6. Exit SHORT when close <= VWAP.
+  7. Stop loss at `stop_pct` from entry.
+  8. Only one trade per asset per day.
+  9. EOD flatten enforced by the engine at 15:55 ET.
 
-Design notes:
-  - entry_dev = 0.007 (0.7%) is chosen based on literature suggesting 0.5-1.2%
-    deviation on 5m bars. 0.1% is noise; 0.7% is a meaningful intraday deviation.
-  - R:R ≈ 0.7%/0.5% = 1.4 if stop is hit before target. In practice target is
-    reached more often than stop on mean-reverting instruments.
-  - Skipping the first 30 min avoids VWAP computed on only a few bars (noisy).
+VWAP = Σ(typical_price × volume) / Σ(volume)
+typical_price = (high + low + close) / 3
 """
 
-import datetime
-from collections import defaultdict
+from datetime import date
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from .base import Strategy
 from ..models import Bar, Direction, Signal
 from ..portfolio import Portfolio
 
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
-
-_NY = ZoneInfo("America/New_York")
-_MARKET_OPEN = datetime.time(9, 30)
-_MARKET_CLOSE = datetime.time(16, 0)
-
-
-def _to_ny(ts: datetime.datetime) -> datetime.datetime:
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=datetime.timezone.utc)
-    return ts.astimezone(_NY)
+ET = ZoneInfo("America/New_York")
 
 
 class VWAPReversionStrategy(Strategy):
-    """VWAP mean reversion — long-only, intraday, no overnight holds.
-
-    Args:
-        symbols:      Symbols to watch and trade.
-        entry_dev:    Enter when close < VWAP × (1 − entry_dev). Default: 0.007 (0.7%).
-        stop_pct:     Stop loss as fraction of entry price. Default: 0.005 (0.5%).
-        entry_start:  NY time before which no entries are allowed (opening noise filter).
-                      Default: 10:00 (skip first 30 min).
-        exit_time:    NY time for EOD flatten. Default: 15:55.
-    """
+    name = "vwap_reversion"
+    label = "VWAP Mean Reversion"
 
     def __init__(
         self,
         symbols: List[str],
-        entry_dev: float = 0.007,
-        stop_pct: float = 0.005,
-        entry_start: datetime.time = datetime.time(10, 0),
-        exit_time: datetime.time = datetime.time(15, 55),
+        entry_dev_pct: float = 0.3,   # % deviation from VWAP to trigger entry
+        stop_pct: float = 0.4,         # % stop loss from entry price
+        entry_end_hour: int = 14,      # no new entries after this ET hour
     ) -> None:
         super().__init__(symbols)
-        self.entry_dev = entry_dev
+        self.entry_dev_pct = entry_dev_pct
         self.stop_pct = stop_pct
-        self.entry_start = entry_start
-        self.exit_time = exit_time
+        self.entry_end_hour = entry_end_hour
+        self._state: Dict[str, dict] = {}
 
-        # Per-symbol daily state
-        self._cur_date: Dict[str, Optional[datetime.date]] = defaultdict(lambda: None)
-        self._vwap_num: Dict[str, float] = defaultdict(float)   # Σ(tp × vol)
-        self._vwap_den: Dict[str, float] = defaultdict(float)   # Σ(vol)
-        self._traded: Dict[str, bool] = defaultdict(bool)
-        self._entry_price: Dict[str, Optional[float]] = defaultdict(lambda: None)
+    def _fresh_day(self) -> dict:
+        return {
+            "current_date": None,
+            "vwap_num": 0.0,    # Σ(typical_price × volume)
+            "vwap_den": 0.0,    # Σ(volume)
+            "vwap": None,
+            "traded_today": False,
+            "stop_level": None,
+            "entry_price": None,
+            "position_side": None,
+        }
 
-    def _reset(self, symbol: str, date: datetime.date) -> None:
-        self._cur_date[symbol] = date
-        self._vwap_num[symbol] = 0.0
-        self._vwap_den[symbol] = 0.0
-        self._traded[symbol] = False
-        self._entry_price[symbol] = None
+    def on_start(self) -> None:
+        self._state = {sym: self._fresh_day() for sym in self.symbols}
+
+    def rules(self) -> List[str]:
+        return [
+            f"Calculate running VWAP from market open each day",
+            f"Go LONG when price falls {self.entry_dev_pct}% below VWAP (oversold intraday)",
+            f"Exit LONG when price returns to VWAP",
+            f"Go SHORT when price rises {self.entry_dev_pct}% above VWAP (overbought intraday)",
+            f"Exit SHORT when price returns to VWAP",
+            f"Stop loss: {self.stop_pct}% from entry — applied immediately on next bar",
+            f"No new entries after {self.entry_end_hour}:00 ET",
+            f"One trade per asset per day — no re-entry",
+            f"All positions closed by 15:55 ET (EOD flatten by engine)",
+        ]
 
     def on_bar(self, bars: Dict[str, Bar], portfolio: Portfolio) -> List[Signal]:
         signals: List[Signal] = []
@@ -93,89 +79,66 @@ class VWAPReversionStrategy(Strategy):
             if bar is None:
                 continue
 
-            ny = _to_ny(bar.timestamp)
-            today = ny.date()
-            t = ny.time()
+            ts = bar.timestamp
+            et = ts.astimezone(ET) if hasattr(ts, "astimezone") else ts
+            today = et.date()
+            st = self._state[symbol]
 
-            # Skip pre/post market
-            if t < _MARKET_OPEN or t >= _MARKET_CLOSE:
-                continue
-
-            # New day reset
-            if self._cur_date[symbol] != today:
-                self._reset(symbol, today)
+            if st["current_date"] != today:
+                st.update(self._fresh_day())
+                st["current_date"] = today
 
             # Update VWAP
-            if bar.volume > 0:
-                typical = (bar.high + bar.low + bar.close) / 3
-                self._vwap_num[symbol] += typical * bar.volume
-                self._vwap_den[symbol] += bar.volume
+            typical = (bar.high + bar.low + bar.close) / 3
+            st["vwap_num"] += typical * bar.volume
+            st["vwap_den"] += bar.volume
+            if st["vwap_den"] > 0:
+                st["vwap"] = st["vwap_num"] / st["vwap_den"]
 
-            if self._vwap_den[symbol] == 0:
+            if st["vwap"] is None:
                 continue
-            vwap = self._vwap_num[symbol] / self._vwap_den[symbol]
 
+            vwap = st["vwap"]
+            price = bar.close
             pos = portfolio.get_position(symbol)
-            in_position = pos is not None and pos.quantity > 0
+            current_qty = pos.quantity if pos else 0
 
-            # ── 1. EOD exit ──────────────────────────────────────────────────
-            if t >= self.exit_time and in_position:
-                signals.append(Signal(
-                    symbol=symbol,
-                    direction=Direction.FLAT,
-                    reason=f"EOD exit @ {t}",
-                ))
-                self._traded[symbol] = True
-                self._entry_price[symbol] = None
+            # Manage open position
+            if current_qty > 0:   # long
+                if st["stop_level"] and price <= st["stop_level"]:
+                    signals.append(Signal(symbol, Direction.FLAT, reason=f"stop {price:.2f}<={st['stop_level']:.2f}"))
+                elif price >= vwap:
+                    signals.append(Signal(symbol, Direction.FLAT, reason=f"VWAP target {price:.2f}>={vwap:.2f}"))
                 continue
 
-            # ── 2. In-position management ────────────────────────────────────
-            if in_position:
-                # Use portfolio's recorded avg_price (actual fill price) for
-                # stop calculation — avoids the signal-bar-close vs fill-open gap.
-                ep = pos.avg_price
-                # Target: price returned to VWAP
-                if bar.close >= vwap:
-                    signals.append(Signal(
-                        symbol=symbol,
-                        direction=Direction.FLAT,
-                        reason=f"Target: close {bar.close:.2f} >= VWAP {vwap:.2f}",
-                    ))
-                    self._traded[symbol] = True
-                    self._entry_price[symbol] = None
-                    continue
-                # Stop loss
-                stop_level = ep * (1 - self.stop_pct)
-                if bar.close < stop_level:
-                    signals.append(Signal(
-                        symbol=symbol,
-                        direction=Direction.FLAT,
-                        reason=(
-                            f"Stop: close {bar.close:.2f} < {stop_level:.2f} "
-                            f"(avg_price {ep:.2f} - {self.stop_pct*100:.1f}%)"
-                        ),
-                    ))
-                    self._traded[symbol] = True
-                    self._entry_price[symbol] = None
-                    continue
+            if current_qty < 0:   # short
+                if st["stop_level"] and price >= st["stop_level"]:
+                    signals.append(Signal(symbol, Direction.FLAT, reason=f"stop {price:.2f}>={st['stop_level']:.2f}"))
+                elif price <= vwap:
+                    signals.append(Signal(symbol, Direction.FLAT, reason=f"VWAP target {price:.2f}<={vwap:.2f}"))
+                continue
 
-            # ── 3. Entry: dip to VWAP − entry_dev ───────────────────────────
-            if not self._traded[symbol] and not in_position:
-                # Skip opening noise window
-                if t < self.entry_start:
-                    continue
-                entry_threshold = vwap * (1 - self.entry_dev)
-                if bar.close < entry_threshold:
-                    signals.append(Signal(
-                        symbol=symbol,
-                        direction=Direction.LONG,
-                        reason=(
-                            f"VWAP dip: close {bar.close:.2f} < "
-                            f"VWAP {vwap:.2f} - {self.entry_dev*100:.1f}% "
-                            f"= {entry_threshold:.2f}"
-                        ),
-                    ))
-                    self._traded[symbol] = True
-                    self._entry_price[symbol] = bar.close
+            # Entry signals (only if no trade today and within entry window)
+            if st["traded_today"] or et.hour >= self.entry_end_hour:
+                continue
+
+            long_threshold  = vwap * (1 - self.entry_dev_pct / 100)
+            short_threshold = vwap * (1 + self.entry_dev_pct / 100)
+
+            if price < long_threshold:
+                signals.append(Signal(symbol, Direction.LONG,
+                                      reason=f"VWAP-{self.entry_dev_pct}% {price:.2f}<{long_threshold:.2f}"))
+                st["traded_today"] = True
+                st["entry_price"] = price
+                st["stop_level"] = price * (1 - self.stop_pct / 100)
+                st["position_side"] = "long"
+
+            elif price > short_threshold:
+                signals.append(Signal(symbol, Direction.SHORT,
+                                      reason=f"VWAP+{self.entry_dev_pct}% {price:.2f}>{short_threshold:.2f}"))
+                st["traded_today"] = True
+                st["entry_price"] = price
+                st["stop_level"] = price * (1 + self.stop_pct / 100)
+                st["position_side"] = "short"
 
         return signals
