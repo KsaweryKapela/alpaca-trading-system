@@ -9,9 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Default asset universe
-STOCKS = ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
-ETFS = ["SPY", "QQQ", "IWM", "XLF", "XLE", "XLK"]
-DEFAULT_UNIVERSE = STOCKS + ETFS
+STOCKS = ["NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "AMD", "NFLX", "COIN", "GOOGL", "BA", "JPM", "PLTR", "RIVN", "SHOP"]
+ETFS = ["QQQ", "SPY"]
+DEFAULT_UNIVERSE = ETFS + STOCKS
 
 # Primary evaluation window
 EVAL_START = "2026-01-01"

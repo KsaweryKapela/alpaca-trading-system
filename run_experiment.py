@@ -5,7 +5,6 @@ Usage:
   .venv/bin/python run_experiment.py \\
     --strategy orb \\
     --slug 001_orb \\
-    [--symbols SPY QQQ AAPL MSFT NVDA]  # default: full DEFAULT_UNIVERSE \\
     [--start 2026-01-01] \\
     [--end 2026-04-10] \\
     [--leverage 1.0] \\
@@ -54,8 +53,6 @@ def next_run_number() -> int:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Run a strategy experiment.")
     p.add_argument("--strategy", required=True, choices=list(STRATEGIES), help="Strategy ID")
-    p.add_argument("--symbols", nargs="+", default=None,
-                   help="Asset symbols to test (default: full DEFAULT_UNIVERSE from config)")
     p.add_argument("--slug", default=None, help="Run slug (auto-assigned if omitted)")
     p.add_argument("--start", default=EVAL_START, help="Start date YYYY-MM-DD")
     p.add_argument("--end", default=EVAL_END, help="End date YYYY-MM-DD")
@@ -255,9 +252,7 @@ def update_status(slug: str, strategy_label: str, m: dict, status: str) -> None:
 def main() -> None:
     args = build_arg_parser().parse_args()
 
-    # Default symbols to full universe if not specified
-    if args.symbols is None:
-        args.symbols = list(DEFAULT_UNIVERSE)
+    symbols = list(DEFAULT_UNIVERSE)
 
     # Auto-assign slug if not provided
     if args.slug is None:
@@ -267,7 +262,7 @@ def main() -> None:
     print(f"\n{'='*50}")
     print(f"  Experiment: {args.slug}")
     print(f"  Strategy:   {args.strategy}")
-    print(f"  Symbols:    {' '.join(args.symbols)}")
+    print(f"  Symbols:    {' '.join(symbols)}")
     print(f"  Window:     {args.start} → {args.end}")
     print(f"  Interval:   {args.interval}")
     print(f"{'='*50}\n")
@@ -280,12 +275,12 @@ def main() -> None:
             print(f"ERROR: {e}")
             sys.exit(1)
 
-    strategy, params = make_strategy(args.strategy, args.symbols, args)
+    strategy, params = make_strategy(args.strategy, symbols, args)
     engine = BacktestEngine(config, leverage=args.leverage, eod_flatten=True)
 
     result = engine.run(
         strategy=strategy,
-        symbols=args.symbols,
+        symbols=symbols,
         start=datetime.fromisoformat(args.start),
         end=datetime.fromisoformat(args.end),
         data_source=args.data_source,

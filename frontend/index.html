@@ -49,6 +49,15 @@
       </div>
     </section>
 
+    <!-- Global asset filter — always visible, persists across experiments -->
+    <section class="panel filter-panel">
+      <div class="asset-filter">
+        <span class="filter-label">Filter by asset:</span>
+        <div id="assetFilterChips" class="asset-chips"></div>
+        <button class="chip-btn" onclick="filterAll()">All</button>
+      </div>
+    </section>
+
     <!-- Active experiment view -->
     <div id="expView" class="hidden">
 
@@ -57,13 +66,6 @@
         <div class="exp-title">
           <span id="expSlug" class="exp-slug"></span>
           <span id="expStatusBadge" class="status-badge"></span>
-        </div>
-        <!-- Asset filter — filters the view, not a re-run -->
-        <div class="asset-filter">
-          <span class="filter-label">Show assets:</span>
-          <div id="assetFilterChips" class="asset-chips"></div>
-          <button class="chip-btn" onclick="filterAll()">All</button>
-          <button class="chip-btn" onclick="filterNone()">None</button>
         </div>
       </div>
 
@@ -96,8 +98,10 @@
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Time (ET)</th>
                 <th>Asset</th>
                 <th>Side</th>
+                <th>Lev</th>
                 <th>Size</th>
                 <th>Price</th>
                 <th>PnL</th>

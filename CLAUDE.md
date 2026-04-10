@@ -10,16 +10,10 @@ Read this at the start of every session to know where to pick up.
 
 > **Update this section at the end of every session.**
 
-- **Last session:** Runs 002–013 completed (2026-04-10). 13 total experiments.
-- **Best result:** 010_gap_dn_only — Sharpe −0.15, PF 0.97 — near-breakeven, not promising yet.
-- **Phase:** Iteration — gap fill signal identified, needs WR filter to cross profitability.
-- **Strategy family:** Gap Fill (`gap_fill`), down_only, min_gap=0.5%, stop_mult=0.5, full fill.
-- **Key learning:** Jan-Apr 2026 is downtrending. VWAP reversion/momentum fail. Gap-down 
-  fades (long into bearish opens) are the only signal with near-zero expectancy so far.
-- **Next action:** Improve WR filter on 010 config. Options:
-  1. Volume spike confirmation (high relative volume gap-down = panic = bounces more)
-  2. Idiosyncratic filter (only trade when SPY is NOT also gapping down)
-  3. Try opening range expansion at 10:00 ET instead of gap fill
+- **Last session:** Clean slate. All prior experiments deleted. New 17-symbol universe active.
+- **Best result:** None yet.
+- **Phase:** Fresh start — begin experimentation on new universe.
+- **Next action:** Run first experiment.
 
 ---
 
@@ -194,8 +188,8 @@ Auto-numbering: `run_experiment.py` auto-increments if `--slug` is omitted.
 
 ## 10. Asset Universe
 
-**ETFs:** SPY, QQQ, IWM, XLF, XLE, XLK  
-**Stocks:** AAPL, MSFT, NVDA, AMZN, META  
+**ETFs:** QQQ, SPY  
+**Stocks:** NVDA, TSLA, AAPL, MSFT, AMZN, META, AMD, NFLX, COIN, GOOGL, BA, JPM, PLTR, RIVN, SHOP  
 Defined in `trading/config.py`. Always test on a mix; never test one symbol alone.
 
 ---

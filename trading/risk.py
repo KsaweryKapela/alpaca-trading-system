@@ -113,10 +113,11 @@ class RiskManager:
             logger.warning("Max positions reached — skipping %s", signal.symbol)
             return None
 
+        lev = signal.leverage if signal.leverage is not None else self.leverage
         if signal.quantity:
             qty = signal.quantity
         else:
-            max_value = equity * self.config.max_position_pct * self.leverage
+            max_value = equity * self.config.max_position_pct * lev
             qty = int(max_value / price)
 
         available = portfolio.cash - cash_floor - committed_cash
@@ -128,7 +129,7 @@ class RiskManager:
 
         return Order(
             symbol=signal.symbol, side=Side.BUY, quantity=qty,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc), leverage=lev,
         )
 
     def _build_short_order(
@@ -143,10 +144,11 @@ class RiskManager:
             logger.warning("Max positions reached — skipping %s", signal.symbol)
             return None
 
+        lev = signal.leverage if signal.leverage is not None else self.leverage
         if signal.quantity:
             qty = signal.quantity
         else:
-            max_value = equity * self.config.max_position_pct * self.leverage
+            max_value = equity * self.config.max_position_pct * lev
             qty = int(max_value / price)
 
         if qty <= 0:
@@ -155,5 +157,5 @@ class RiskManager:
 
         return Order(
             symbol=signal.symbol, side=Side.SELL, quantity=qty,
-            created_at=datetime.now(timezone.utc), is_short_entry=True,
+            created_at=datetime.now(timezone.utc), is_short_entry=True, leverage=lev,
         )

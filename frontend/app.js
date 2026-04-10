@@ -12,6 +12,10 @@ const state = {
 // ── Boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   document.getElementById("refreshBtn").addEventListener("click", loadExperiments);
+  // Initialise global asset filter with the full universe before loading experiments
+  const uResp = await fetch("/api/universe");
+  const universe = await uResp.json();
+  buildAssetFilter(universe.all || []);
   await loadExperiments();
 }
 
@@ -28,6 +32,41 @@ async function loadExperiments() {
 }
 
 // ── Experiment list ───────────────────────────────────────────────────────────
+
+// Aggregate per-symbol metrics for a set of selected assets.
+// Returns null when nothing is selected, or a stats object when 1+ symbols selected.
+// `notTested` = true if none of the selected symbols appear in this experiment.
+function aggregateSelected(exp, selectedAssets) {
+  if (selectedAssets === null) return null;  // "all" — caller uses overall metrics
+  if (selectedAssets.size === 0) return { empty: true };
+
+  const ps_all = exp.per_symbol_metrics || {};
+  const init_eq = (exp.metrics || {}).initial_equity || 100000;
+  let total_pnl = 0, fills = 0, rt = 0, win_count = 0, gross_win = 0, gross_loss = 0;
+  let found = 0;
+
+  for (const sym of selectedAssets) {
+    const ps = ps_all[sym];
+    if (!ps) continue;
+    found++;
+    total_pnl += ps.total_pnl || 0;
+    fills     += ps.fills      || 0;
+    rt        += ps.round_trips || 0;
+    win_count += ps.win_count  || 0;
+    gross_win += ps.gross_win  || 0;
+    gross_loss += ps.gross_loss || 0;
+  }
+
+  if (found === 0) return { notTested: true };
+
+  return {
+    ret:      Math.round(total_pnl / init_eq * 10000) / 100,
+    fills,
+    winRate:  rt ? Math.round(win_count / rt * 1000) / 10 : null,
+    pf:       gross_loss > 0 ? Math.round(gross_win / gross_loss * 100) / 100 : null,
+  };
+}
+
 function renderExpList(experiments) {
   const tbody = document.getElementById("expBody");
   const count = document.getElementById("expCount");
@@ -38,17 +77,47 @@ function renderExpList(experiments) {
     return;
   }
 
+  const isAll = state.selectedAssets === null;
+  const dash  = "—";
+  const na    = '<span class="dim">n/a</span>';
+
   tbody.innerHTML = "";
   for (const exp of experiments) {
-    const m = exp.metrics || {};
-    const x = exp.extended_metrics || {};
+    const m    = exp.metrics || {};
+    const x    = exp.extended_metrics || {};
     const meta = exp.metadata || {};
-    const ret = m.total_return_pct;
-    const monthly = m.monthly_return_pct;
-
     const assets = meta.symbols || [];
     const assetStr = assets.length <= 4 ? assets.join(", ")
                    : `${assets.slice(0, 3).join(", ")} +${assets.length - 3}`;
+
+    let retCell, monthlyCell, sharpeCell, ddCell, fillsCell, wrCell;
+
+    if (isAll) {
+      // Overall metrics
+      retCell     = `<span class="${colorCls(m.total_return_pct)}">${fmt(m.total_return_pct, "%", true)}</span>`;
+      monthlyCell = `<span class="${colorCls(m.monthly_return_pct)}">${fmt(m.monthly_return_pct, "%", true)}</span>`;
+      sharpeCell  = `<span class="${colorCls(m.sharpe_ratio)}">${fmt(m.sharpe_ratio)}</span>`;
+      ddCell      = `<span class="${colorCls(m.max_drawdown_pct)}">${fmt(m.max_drawdown_pct, "%", true)}</span>`;
+      fillsCell   = m.fills ?? dash;
+      wrCell      = x.win_rate_pct != null ? `<span class="${colorCls(x.win_rate_pct - 50)}">${x.win_rate_pct}%</span>` : dash;
+    } else {
+      const agg = aggregateSelected(exp, state.selectedAssets);
+      if (agg.empty) {
+        // "None" selected
+        retCell = monthlyCell = sharpeCell = ddCell = fillsCell = wrCell = dash;
+      } else if (agg.notTested) {
+        // Symbol(s) not in this experiment
+        retCell = monthlyCell = sharpeCell = ddCell = fillsCell = wrCell = na;
+      } else {
+        // Subset stats — Sharpe/DD/Monthly need equity curve, not available per-symbol
+        retCell     = `<span class="${colorCls(agg.ret)}">${fmt(agg.ret, "%", true)}</span>`;
+        monthlyCell = dash;
+        sharpeCell  = dash;
+        ddCell      = dash;
+        fillsCell   = agg.fills ?? dash;
+        wrCell      = agg.winRate != null ? `<span class="${colorCls(agg.winRate - 50)}">${agg.winRate}%</span>` : dash;
+      }
+    }
 
     let rowCls = "exp-row";
     if (exp.slug === state.activeSlug) rowCls += " row-active";
@@ -62,12 +131,12 @@ function renderExpList(experiments) {
       <td>${meta.strategy_label || meta.strategy || "—"}</td>
       <td class="col-assets" title="${assets.join(', ')}">${assetStr}</td>
       <td class="col-mono">${meta.interval || "—"}</td>
-      <td class="${colorCls(ret)}">${fmt(ret, "%", true)}</td>
-      <td class="${colorCls(monthly)}">${fmt(monthly, "%", true)}</td>
-      <td class="${colorCls(m.sharpe_ratio)}">${fmt(m.sharpe_ratio)}</td>
-      <td class="${colorCls(m.max_drawdown_pct)}">${fmt(m.max_drawdown_pct, "%", true)}</td>
-      <td>${m.fills ?? "—"}</td>
-      <td class="${colorCls(x.win_rate_pct != null ? x.win_rate_pct - 50 : null)}">${x.win_rate_pct != null ? x.win_rate_pct + "%" : "—"}</td>
+      <td>${retCell}</td>
+      <td>${monthlyCell}</td>
+      <td>${sharpeCell}</td>
+      <td>${ddCell}</td>
+      <td>${fillsCell}</td>
+      <td>${wrCell}</td>
       <td><span class="status-pill ${statusCls(exp.status)}">${exp.status}</span></td>
     `;
     tr.addEventListener("click", () => loadExperiment(exp.slug));
@@ -91,11 +160,9 @@ async function loadExperiment(slug) {
   if (data.error) { alert(data.error); return; }
 
   state.active = data;
-  const symbols = (data.metadata?.symbols || []);
-  // Do NOT reset selectedAssets — global filter persists across experiments.
-
-  buildAssetFilter(symbols);
-  renderExperiment(data);
+  // Global filter already set — chips are persistent, do not rebuild.
+  renderExperiment(data);      // slug, status badge, rules
+  applyAssetFilter();          // metrics / calendar / transactions with current filter
   document.getElementById("expView").classList.remove("hidden");
 }
 
@@ -116,21 +183,19 @@ function buildAssetFilter(symbols) {
 }
 
 function toggleFilter(sym, btn) {
-  if (state.selectedAssets === null) {
-    // Currently "all" — deselecting one chip means move to explicit mode with all-minus-one
-    const allSyms = state.active?.metadata?.symbols || [];
-    state.selectedAssets = new Set(allSyms.filter(s => s !== sym));
-    // Reflect: all chips active except the clicked one
-    document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
-      c.classList.toggle("active", c.dataset.sym !== sym);
-    });
-  } else if (state.selectedAssets.has(sym)) {
-    state.selectedAssets.delete(sym);
-    btn.classList.remove("active");
+  // Radio-button style: click selects only this asset; click again returns to all.
+  const onlyThis = state.selectedAssets instanceof Set &&
+                   state.selectedAssets.size === 1 &&
+                   state.selectedAssets.has(sym);
+  if (onlyThis) {
+    state.selectedAssets = null;  // back to all
   } else {
-    state.selectedAssets.add(sym);
-    btn.classList.add("active");
+    state.selectedAssets = new Set([sym]);
   }
+  // Sync chip active states
+  document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
+    c.classList.toggle("active", state.selectedAssets === null || state.selectedAssets.has(c.dataset.sym));
+  });
   applyAssetFilter();
 }
 
@@ -147,6 +212,7 @@ function filterNone() {
 }
 
 function applyAssetFilter() {
+  renderExpList(state.experiments);
   if (!state.active) return;
   const txns = state.active.transactions || [];
   renderMetrics(...computeFilteredMetrics(txns, state.active.metadata));
@@ -210,11 +276,8 @@ function renderExperiment(data) {
   const badge = document.getElementById("expStatusBadge");
   badge.textContent = data.status || "";
   badge.className = `status-badge ${statusCls(data.status)}`;
-
-  renderMetrics(data.metrics, data.extended_metrics, data.metadata, false);
-  renderCalendar(data.calendar || []);
   renderRules(data.rules || []);
-  renderTransactions(data.transactions || []);
+  // Metrics / calendar / transactions are rendered by applyAssetFilter()
 }
 
 // ── Rules ─────────────────────────────────────────────────────────────────────
@@ -396,7 +459,9 @@ function showTooltip(e, day) {
                   : sideLower.includes("sell") && !sideLower.includes("short") ? "tp-sell"
                   : "tp-short";
       const pnl = t.pnl != null ? ` <span class="${t.pnl >= 0 ? 'tp-pos' : 'tp-neg'}">${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}</span>` : "";
-      tradesHtml += `<div class="tip-trade"><span class="${sideCls}">${t.asset} ${t.side}</span> ×${t.size} @$${t.price.toFixed(2)}${pnl}</div>`;
+      const timeStr = t.time ? `<span class="dim"> ${t.time}</span>` : "";
+      const levTag = t.leverage != null && t.leverage !== 1 ? ` <span class="pos">${t.leverage}×</span>` : "";
+      tradesHtml += `<div class="tip-trade"><span class="${sideCls}">${t.asset} ${t.side}</span>${timeStr}${levTag} ×${t.size} @$${t.price.toFixed(2)}${pnl}</div>`;
     }
     tradesHtml += `</div>`;
   }
@@ -440,7 +505,7 @@ function renderTransactions(txns) {
     .reverse();
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No transactions for selected assets.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">No transactions for selected assets.</td></tr>';
     return;
   }
 
@@ -454,11 +519,15 @@ function renderTransactions(txns) {
       pnlStr = (t.pnl >= 0 ? "+" : "") + "$" + t.pnl.toFixed(2);
       pnlCls = t.pnl > 0 ? "pnl-pos" : t.pnl < 0 ? "pnl-neg" : "pnl-zero";
     }
+    const levStr = t.leverage != null && t.leverage !== 1 ? `${t.leverage}×` : "1×";
+    const levCls = t.leverage != null && t.leverage !== 1 ? "pos" : "dim";
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${t.date}</td>
+      <td class="col-mono dim">${t.time || "—"}</td>
       <td>${t.asset}</td>
       <td class="${sideCls}">${t.side}</td>
+      <td class="${levCls}">${levStr}</td>
       <td>${t.size}</td>
       <td>$${t.price.toFixed(2)}</td>
       <td class="${pnlCls}">${pnlStr}</td>

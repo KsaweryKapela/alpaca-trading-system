@@ -218,9 +218,8 @@ class BacktestResult:
         """
         avg_prices: Dict[str, float] = {}
         quantities: Dict[str, float] = {}
-        # Track total entry commission paid for the current open position.
-        # Stored as commission-per-share so partial closes allocate correctly.
         entry_comm_ps: Dict[str, float] = {}   # commission per share at entry
+        entry_leverage: Dict[str, float] = {}  # leverage used at entry
         result = []
 
         for order in sorted(self.portfolio.filled_orders, key=lambda o: o.filled_at or o.created_at):
@@ -230,7 +229,9 @@ class BacktestResult:
             price = order.fill_price
             qty = order.quantity
             ts = order.filled_at or order.created_at
-            date_str = ts.astimezone(ET).strftime("%Y-%m-%d")
+            ts_et = ts.astimezone(ET)
+            date_str = ts_et.strftime("%Y-%m-%d")
+            time_str = ts_et.strftime("%H:%M")
             exit_comm_ps = order.commission / qty if qty > 0 else 0.0
 
             pnl = None
@@ -241,8 +242,8 @@ class BacktestResult:
                 prev_cps = entry_comm_ps.get(sym, 0.0)
                 new_qty = prev_qty + qty
                 avg_prices[sym] = (prev_qty * prev_avg + qty * price) / new_qty if new_qty else price
-                # Blend entry commission per share
                 entry_comm_ps[sym] = (prev_qty * prev_cps + qty * exit_comm_ps) / new_qty if new_qty else exit_comm_ps
+                entry_leverage[sym] = order.leverage
                 quantities[sym] = new_qty
                 label = "BUY (open long)"
 
@@ -257,6 +258,7 @@ class BacktestResult:
                     avg_prices.pop(sym, None)
                     quantities.pop(sym, None)
                     entry_comm_ps.pop(sym, None)
+                    entry_leverage.pop(sym, None)
                 label = "SELL (close long)"
 
             elif order.side == Side.SELL and order.is_short_entry:
@@ -267,6 +269,7 @@ class BacktestResult:
                 new_short = prev_qty + qty
                 avg_prices[sym] = (prev_qty * prev_avg + qty * price) / new_short if new_short else price
                 entry_comm_ps[sym] = (prev_qty * prev_cps + qty * exit_comm_ps) / new_short if new_short else exit_comm_ps
+                entry_leverage[sym] = order.leverage
                 quantities[sym] = -(prev_qty + qty)
                 label = "SELL (open short)"
 
@@ -281,6 +284,7 @@ class BacktestResult:
                     avg_prices.pop(sym, None)
                     quantities.pop(sym, None)
                     entry_comm_ps.pop(sym, None)
+                    entry_leverage.pop(sym, None)
                 label = "BUY (cover short)"
 
             else:
@@ -288,12 +292,14 @@ class BacktestResult:
 
             result.append({
                 "date": date_str,
+                "time": time_str,
                 "asset": sym,
                 "side": label,
                 "size": qty,
                 "price": round(price, 4),
                 "pnl": pnl,
                 "commission": round(order.commission, 4),
+                "leverage": entry_leverage.get(sym, order.leverage),
             })
         return result
 
@@ -325,6 +331,48 @@ class BacktestResult:
             result.append(day)
         return sorted(result, key=lambda x: x["date"])
 
+    # ── Per-symbol breakdown ──────────────────────────────────────────────────
+
+    def per_symbol_metrics(self) -> dict:
+        """Per-symbol breakdown: PnL, fills, and round-trip stats."""
+        by_symbol: Dict[str, list] = defaultdict(list)
+        for order in self.portfolio.filled_orders:
+            if order.is_filled:
+                by_symbol[order.symbol].append(order)
+
+        # Aggregate PnL and fills from transactions
+        txn_pnl: Dict[str, float] = defaultdict(float)
+        txn_fills: Dict[str, int] = defaultdict(int)
+        for t in self.transactions():
+            txn_fills[t["asset"]] += 1
+            if t["pnl"] is not None:
+                txn_pnl[t["asset"]] += t["pnl"]
+
+        initial_equity = float(self.equity_curve.iloc[0]) if len(self.equity_curve) > 0 else 100000.0
+
+        result: Dict[str, dict] = {}
+        for sym in by_symbol:
+            rts = self._fifo_match(by_symbol[sym])
+            pnls = [rt["pnl"] for rt in rts]
+            wins = [p for p in pnls if p > 0]
+            losses = [p for p in pnls if p <= 0]
+            gross_win = sum(wins)
+            gross_loss = abs(sum(losses)) if losses else 0
+            total_pnl = round(txn_pnl[sym], 2)
+            result[sym] = {
+                "total_pnl": total_pnl,
+                "return_pct": round(total_pnl / initial_equity * 100, 2),
+                "fills": txn_fills[sym],
+                "round_trips": len(rts),
+                "win_count": len(wins),
+                "gross_win": round(gross_win, 2),
+                "gross_loss": round(gross_loss, 2),
+                "win_rate_pct": round(len(wins) / len(rts) * 100, 1) if rts else None,
+                "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
+                "expectancy": round(sum(pnls) / len(pnls), 2) if pnls else None,
+            }
+        return result
+
     # ── Full serialised dict ──────────────────────────────────────────────────
 
     def to_dict(self, slug: str = "", status: str = "in_progress") -> dict:
@@ -336,6 +384,7 @@ class BacktestResult:
             "metadata": self.metadata,
             "metrics": self.metrics(),
             "extended_metrics": self.extended_metrics(),
+            "per_symbol_metrics": self.per_symbol_metrics(),
             "transactions": self.transactions(),
             "calendar": self.calendar(),
         }

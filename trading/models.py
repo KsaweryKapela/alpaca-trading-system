@@ -40,7 +40,8 @@ class Bar:
 class Signal:
     symbol: str
     direction: Direction
-    quantity: Optional[int] = None   # None → risk manager decides size
+    quantity: Optional[int] = None        # None → risk manager decides size
+    leverage: Optional[float] = None     # None → use engine-level default leverage
     reason: str = ""
 
 
@@ -58,6 +59,7 @@ class Order:
     # Tag so we know if this is an entry or exit for a short position
     is_short_entry: bool = False   # True = opening a short (SELL to open)
     is_short_cover: bool = False   # True = covering a short (BUY to close)
+    leverage: float = 1.0          # leverage multiplier used when sizing this order
 
     @property
     def is_filled(self) -> bool:

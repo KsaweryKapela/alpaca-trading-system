@@ -141,12 +141,13 @@ tbody td { padding: 6px 10px; white-space: nowrap; }
 .col-slug { font-weight: 600; color: var(--ink); }
 .col-assets { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 
+/* ── Global asset filter ────────────────────────────────────────────────── */
+.filter-panel { padding: 10px 16px; }
+
 /* ── Experiment view ─────────────────────────────────────────────────────── */
 .exp-header-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: 12px;
 }
 .exp-title { display: flex; align-items: center; gap: 10px; }
@@ -224,6 +225,7 @@ tbody td { padding: 6px 10px; white-space: nowrap; }
 .metric-value.pos { color: var(--green); }
 .metric-value.neg { color: var(--red); }
 .metric-value.dim { color: var(--ink-dim); }
+.dim { color: var(--ink-dim); }
 
 .metrics-note {
   grid-column: 1 / -1;
