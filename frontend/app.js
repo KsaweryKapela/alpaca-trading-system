@@ -3,7 +3,10 @@ const state = {
   experiments: [],          // full list from /api/experiments
   active: null,             // currently viewed experiment (full data)
   activeSlug: null,
-  selectedAssets: new Set(), // asset filter for the active experiment view
+  // Global asset filter — persists across experiment switches.
+  // null  = no filter (show all assets)
+  // Set   = explicit selection; empty Set = show nothing
+  selectedAssets: null,
 };
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
@@ -89,7 +92,7 @@ async function loadExperiment(slug) {
 
   state.active = data;
   const symbols = (data.metadata?.symbols || []);
-  state.selectedAssets = new Set(symbols);
+  // Do NOT reset selectedAssets — global filter persists across experiments.
 
   buildAssetFilter(symbols);
   renderExperiment(data);
@@ -101,8 +104,10 @@ function buildAssetFilter(symbols) {
   const container = document.getElementById("assetFilterChips");
   container.innerHTML = "";
   for (const sym of symbols) {
+    // Active when: no filter (null = all) OR this symbol is in the explicit set
+    const active = state.selectedAssets === null || state.selectedAssets.has(sym);
     const btn = document.createElement("button");
-    btn.className = "asset-chip active";
+    btn.className = "asset-chip" + (active ? " active" : "");
     btn.textContent = sym;
     btn.dataset.sym = sym;
     btn.addEventListener("click", () => toggleFilter(sym, btn));
@@ -111,7 +116,15 @@ function buildAssetFilter(symbols) {
 }
 
 function toggleFilter(sym, btn) {
-  if (state.selectedAssets.has(sym)) {
+  if (state.selectedAssets === null) {
+    // Currently "all" — deselecting one chip means move to explicit mode with all-minus-one
+    const allSyms = state.active?.metadata?.symbols || [];
+    state.selectedAssets = new Set(allSyms.filter(s => s !== sym));
+    // Reflect: all chips active except the clicked one
+    document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
+      c.classList.toggle("active", c.dataset.sym !== sym);
+    });
+  } else if (state.selectedAssets.has(sym)) {
     state.selectedAssets.delete(sym);
     btn.classList.remove("active");
   } else {
@@ -122,13 +135,13 @@ function toggleFilter(sym, btn) {
 }
 
 function filterAll() {
-  state.selectedAssets = new Set(state.active?.metadata?.symbols || []);
+  state.selectedAssets = null;  // null = show everything
   document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => c.classList.add("active"));
   applyAssetFilter();
 }
 
 function filterNone() {
-  state.selectedAssets.clear();
+  state.selectedAssets = new Set();  // empty set = show nothing
   document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => c.classList.remove("active"));
   applyAssetFilter();
 }
@@ -145,10 +158,8 @@ function applyAssetFilter() {
 // When all assets selected: return stored metrics unchanged (includes equity-curve Sharpe/DD).
 // When a subset: recompute from transactions (Sharpe and DD shown as "—", can't derive without equity curve).
 function computeFilteredMetrics(txns, meta) {
-  const allSymbols = meta?.symbols || [];
-  const isAll = allSymbols.length > 0 &&
-                state.selectedAssets.size === allSymbols.length &&
-                allSymbols.every(s => state.selectedAssets.has(s));
+  // null = all assets selected (no filter)
+  const isAll = state.selectedAssets === null;
 
   if (isAll) {
     return [state.active.metrics, state.active.extended_metrics, meta, false];
@@ -272,7 +283,8 @@ function renderCalendar(calData) {
   // Filter calendar data to selected assets
   const filtered = calData.map(day => {
     if (!day.has_trades) return day;
-    const trades = (day.trades || []).filter(t => state.selectedAssets.has(t.asset));
+    const trades = (day.trades || []).filter(t =>
+      state.selectedAssets === null || state.selectedAssets.has(t.asset));
     const pnl = trades.reduce((s, t) => s + (t.pnl ?? 0), 0);
     const assets = [...new Set(trades.map(t => t.asset))];
     return { ...day, trades, trade_count: trades.length, pnl: Math.round(pnl * 100) / 100,
@@ -423,7 +435,7 @@ function renderTransactions(txns) {
   tbody.innerHTML = "";
 
   const filtered = txns
-    .filter(t => state.selectedAssets.size === 0 || state.selectedAssets.has(t.asset))
+    .filter(t => state.selectedAssets === null || state.selectedAssets.has(t.asset))
     .slice()
     .reverse();
 

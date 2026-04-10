@@ -4,8 +4,8 @@
 Usage:
   .venv/bin/python run_experiment.py \\
     --strategy orb \\
-    --symbols SPY QQQ AAPL MSFT NVDA \\
     --slug 001_orb \\
+    [--symbols SPY QQQ AAPL MSFT NVDA]  # default: full DEFAULT_UNIVERSE \\
     [--start 2026-01-01] \\
     [--end 2026-04-10] \\
     [--leverage 1.0] \\
@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 sys.path.insert(0, str(ROOT))
-from trading.config import Config, EVAL_START, EVAL_END
+from trading.config import Config, EVAL_START, EVAL_END, DEFAULT_UNIVERSE
 from trading.engine.backtest import BacktestEngine
 from trading.strategy import STRATEGIES
 
@@ -54,7 +54,8 @@ def next_run_number() -> int:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Run a strategy experiment.")
     p.add_argument("--strategy", required=True, choices=list(STRATEGIES), help="Strategy ID")
-    p.add_argument("--symbols", nargs="+", required=True, help="Asset symbols to test")
+    p.add_argument("--symbols", nargs="+", default=None,
+                   help="Asset symbols to test (default: full DEFAULT_UNIVERSE from config)")
     p.add_argument("--slug", default=None, help="Run slug (auto-assigned if omitted)")
     p.add_argument("--start", default=EVAL_START, help="Start date YYYY-MM-DD")
     p.add_argument("--end", default=EVAL_END, help="End date YYYY-MM-DD")
@@ -253,6 +254,10 @@ def update_status(slug: str, strategy_label: str, m: dict, status: str) -> None:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+
+    # Default symbols to full universe if not specified
+    if args.symbols is None:
+        args.symbols = list(DEFAULT_UNIVERSE)
 
     # Auto-assign slug if not provided
     if args.slug is None:
