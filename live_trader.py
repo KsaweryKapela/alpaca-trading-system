@@ -191,7 +191,7 @@ class LiveTrader:
 
     # ── WebSocket callback (called from alpaca's async loop) ──────────────────
 
-    def _ws_on_bar(self, ab: AlpacaBar) -> None:
+    async def _ws_on_bar(self, ab: AlpacaBar) -> None:
         """Fast: just enqueue. Strategy thread does the work."""
         self._bar_queue.put(ab)
 
