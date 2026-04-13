@@ -77,16 +77,7 @@ BAR_COMPLETENESS_THRESHOLD = 0.70
 # ── Live Portfolio ─────────────────────────────────────────────────────────────
 
 class LivePortfolio:
-    """Portfolio interface backed by Alpaca's actual account state.
-
-    The strategy and risk manager call:
-      - portfolio.cash               → available buying power
-      - portfolio.positions          → {symbol: Position}
-      - portfolio.get_position(sym)  → Optional[Position]
-      - portfolio.equity(prices)     → float
-
-    All values are synced from Alpaca on demand (cached for SYNC_INTERVAL seconds).
-    """
+    """Portfolio interface backed by Alpaca's actual account state."""
 
     SYNC_INTERVAL = 10  # seconds
 
@@ -102,11 +93,12 @@ class LivePortfolio:
         """Hard refresh from Alpaca REST API."""
         try:
             account = self._client.get_account()
-            # buying_power = what we can actually spend (includes margin)
+            prev_equity = self._equity
             self._cash = float(account.buying_power)
             self._equity = float(account.equity)
 
             alpaca_positions = self._client.get_all_positions()
+            prev_pos_count = len(self._positions)
             self._positions = {}
             for p in alpaca_positions:
                 qty = int(float(p.qty))
@@ -118,12 +110,26 @@ class LivePortfolio:
                     avg_price=float(p.avg_entry_price),
                 )
             self._last_sync = time.monotonic()
-            log.debug(
-                "Synced — equity=$%.2f  buying_power=$%.2f  open_positions=%d",
-                self._equity, self._cash, len(self._positions),
+
+            # Log position changes
+            pos_count = len(self._positions)
+            equity_delta = self._equity - prev_equity if prev_equity else 0
+            delta_str = f"  Δequity={equity_delta:+.2f}" if prev_equity else ""
+            log.info(
+                "  [sync] equity=$%.2f  buying_power=$%.2f  positions=%d%s",
+                self._equity, self._cash, pos_count, delta_str,
             )
+            if self._positions:
+                for sym, pos in self._positions.items():
+                    side = "LONG" if pos.quantity > 0 else "SHORT"
+                    log.info(
+                        "    %-6s %-5s ×%-4d  avg=$%.2f",
+                        sym, side, abs(pos.quantity), pos.avg_price,
+                    )
+            elif pos_count != prev_pos_count:
+                log.info("    (no open positions)")
         except Exception as exc:
-            log.error("Portfolio sync failed: %s", exc)
+            log.error("  [sync] FAILED: %s", exc)
 
     def _maybe_sync(self) -> None:
         if time.monotonic() - self._last_sync > self.SYNC_INTERVAL:
@@ -165,6 +171,8 @@ class LiveTrader:
 
         # Bar accumulation — written by WebSocket thread, read by strategy thread
         self._bar_queue: queue.Queue = queue.Queue()
+        self._bars_received: int = 0       # total bar count for diagnostics
+        self._last_bar_log: float = 0.0    # monotonic time of last "heartbeat" log
 
         self._new_day_done: Optional[str] = None  # date string, reset daily
 
@@ -189,11 +197,21 @@ class LiveTrader:
             volume=float(ab.volume),
         )
 
-    # ── WebSocket callback (called from alpaca's async loop) ──────────────────
+    # ── WebSocket callback (must be a coroutine) ──────────────────────────────
 
     async def _ws_on_bar(self, ab: AlpacaBar) -> None:
         """Fast: just enqueue. Strategy thread does the work."""
         self._bar_queue.put(ab)
+        self._bars_received += 1
+
+        # Heartbeat log every 60 seconds so we know the stream is alive
+        now = time.monotonic()
+        if now - self._last_bar_log >= 60:
+            self._last_bar_log = now
+            log.info(
+                "[ws] heartbeat — bars received so far: %d  queue depth: %d",
+                self._bars_received, self._bar_queue.qsize(),
+            )
 
     # ── Strategy thread ───────────────────────────────────────────────────────
 
@@ -202,12 +220,17 @@ class LiveTrader:
         bar_buffer: Dict[str, Dict[str, Bar]] = {}  # ts_key → {symbol: Bar}
         last_fired: Optional[str] = None
 
-        log.info("Strategy loop started.")
+        log.info("[strategy] loop started — threshold %.0f%% of %d symbols (%d bars min)",
+                 BAR_COMPLETENESS_THRESHOLD * 100, len(SYMBOLS),
+                 int(len(SYMBOLS) * BAR_COMPLETENESS_THRESHOLD))
 
         while True:
             try:
                 ab = self._bar_queue.get(timeout=5)
             except queue.Empty:
+                if not self._is_market_hours():
+                    now = datetime.now(ET)
+                    log.debug("[strategy] outside market hours (%s), idle", now.strftime("%H:%M ET"))
                 continue
 
             if not self._is_market_hours():
@@ -218,14 +241,21 @@ class LiveTrader:
 
             bar_buffer.setdefault(ts_key, {})[bar.symbol] = bar
             bucket = bar_buffer[ts_key]
+            n_arrived = len(bucket)
+
+            log.debug("[bar] %s  %s  O=%.2f H=%.2f L=%.2f C=%.2f  (%d/%d in bucket)",
+                      ts_key, bar.symbol, bar.open, bar.high, bar.low, bar.close,
+                      n_arrived, len(SYMBOLS))
 
             ready = (
                 ts_key != last_fired
                 and "SPY" in bucket
-                and len(bucket) >= int(len(SYMBOLS) * BAR_COMPLETENESS_THRESHOLD)
+                and n_arrived >= int(len(SYMBOLS) * BAR_COMPLETENESS_THRESHOLD)
             )
 
             if ready:
+                log.info("[strategy] firing for %s  (%d/%d symbols arrived)",
+                         ts_key, n_arrived, len(SYMBOLS))
                 last_fired = ts_key
                 self._fire(dict(bucket), ts_key)
 
@@ -236,7 +266,9 @@ class LiveTrader:
 
     def _fire(self, bars: Dict[str, Bar], ts_key: str) -> None:
         """Run strategy + place orders for one completed minute."""
-        log.info("── %s  (%d/%d symbols) ──", ts_key, len(bars), len(SYMBOLS))
+        spy_bar = bars.get("SPY")
+        spy_info = (f"SPY O={spy_bar.open:.2f} C={spy_bar.close:.2f}" if spy_bar else "SPY missing")
+        log.info("── %s  %s  (%d symbols) ──", ts_key, spy_info, len(bars))
 
         # Hard sync before decision
         self.portfolio.sync()
@@ -249,7 +281,7 @@ class LiveTrader:
             self._new_day_done = today_str
             equity = self.portfolio.equity()
             self.risk.new_day(equity)
-            log.info("New day %s — equity=$%.2f", today_str, equity)
+            log.info("[day] new trading day %s — start equity=$%.2f", today_str, equity)
 
         prices = {sym: b.close for sym, b in bars.items()}
 
@@ -257,33 +289,42 @@ class LiveTrader:
         try:
             signals = self.strategy.on_bar(bars, self.portfolio)
         except Exception as exc:
-            log.error("Strategy error: %s", exc, exc_info=True)
+            log.error("[strategy] on_bar error: %s", exc, exc_info=True)
             return
 
         if not signals:
+            log.debug("[strategy] no signals this bar")
             return
 
-        log.info(
-            "Signals: %s",
-            [(s.symbol, s.direction.value, s.reason) for s in signals],
-        )
+        log.info("[strategy] %d signal(s):", len(signals))
+        for s in signals:
+            log.info("    %-6s %-5s  reason=%s", s.symbol, s.direction.value.upper(), s.reason)
 
         # Size orders via risk manager
         orders = self.risk.validate(signals, self.portfolio, prices)
         if not orders:
+            log.warning("[risk] all signals blocked by risk manager (cash/position limits)")
             return
+
+        log.info("[risk] %d order(s) approved:", len(orders))
+        for o in orders:
+            action = "COVER" if o.is_short_cover else ("SHORT" if o.is_short_entry else o.side.value.upper())
+            log.info("    %-5s %-6s ×%d  @ mkt (~$%.2f)",
+                     action, o.symbol, o.quantity, prices.get(o.symbol, 0))
 
         # Place on Alpaca
         for order in orders:
-            self._place_order(order)
+            self._place_order(order, prices)
 
         # Give fills a moment, then resync
         time.sleep(2)
+        log.info("[orders] waiting 2s for fills, then resyncing...")
         self.portfolio.sync()
 
-    def _place_order(self, order) -> None:
+    def _place_order(self, order, prices: Dict[str, float]) -> None:
         side = OrderSide.BUY if order.side.value == "buy" else OrderSide.SELL
         action = "COVER" if order.is_short_cover else ("SHORT" if order.is_short_entry else side.value.upper())
+        est_value = order.quantity * prices.get(order.symbol, 0)
         try:
             req = MarketOrderRequest(
                 symbol=order.symbol,
@@ -293,12 +334,13 @@ class LiveTrader:
             )
             result = self._trading_client.submit_order(req)
             log.info(
-                "  [fill] %-5s %-6s %-5s ×%-4d  status=%s",
-                action, order.symbol, "", order.quantity, result.status,
+                "  [order] %-5s %-6s ×%-4d  est_value=$%.0f  id=%s  status=%s",
+                action, order.symbol, order.quantity, est_value,
+                str(result.id)[:8], result.status,
             )
         except Exception as exc:
             log.error(
-                "  [fail] %s %s ×%d — %s",
+                "  [order] FAILED %-5s %-6s ×%d — %s",
                 action, order.symbol, order.quantity, exc,
             )
 
@@ -310,17 +352,26 @@ class LiveTrader:
         log.info("Symbols (%d): %s", len(SYMBOLS), ", ".join(SYMBOLS))
         log.info("Leverage: %.1fx   Paper: %s",
                  LEVERAGE, os.getenv("ALPACA_PAPER", "true"))
+        log.info("Bar threshold: %.0f%% of symbols must arrive before firing",
+                 BAR_COMPLETENESS_THRESHOLD * 100)
         log.info("=" * 60)
 
         # Initial sync & sanity check
+        log.info("[startup] syncing account state...")
         self.portfolio.sync()
-        log.info(
-            "Account — equity=$%.2f  buying_power=$%.2f  open_positions=%d",
-            self.portfolio._equity, self.portfolio._cash, len(self.portfolio._positions),
-        )
+
+        if self.portfolio._positions:
+            log.info("[startup] existing open positions carried over:")
+            for sym, pos in self.portfolio._positions.items():
+                side = "LONG" if pos.quantity > 0 else "SHORT"
+                log.info("    %-6s %-5s ×%d  avg=$%.2f", sym, side,
+                         abs(pos.quantity), pos.avg_price)
+        else:
+            log.info("[startup] no existing open positions")
 
         # Initialise strategy state
         self.strategy.on_start()
+        log.info("[startup] strategy initialised")
 
         # Start strategy worker thread
         worker = threading.Thread(target=self._strategy_loop, daemon=True, name="strategy")
@@ -328,7 +379,7 @@ class LiveTrader:
 
         # Subscribe and start WebSocket (blocking)
         self._stream.subscribe_bars(self._ws_on_bar, *SYMBOLS)
-        log.info("WebSocket subscribed — waiting for market bars...")
+        log.info("[startup] WebSocket subscribed — waiting for market bars...")
         self._stream.run()
 
 
