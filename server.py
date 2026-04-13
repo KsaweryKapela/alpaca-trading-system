@@ -34,51 +34,95 @@ REPORTS_DIR = ROOT / "experiments" / "reports"
 from trading.config import STOCKS, ETFS, DEFAULT_UNIVERSE
 
 
+import math as _math
+
 def _per_symbol_from_txns(transactions: list, initial_equity: float) -> dict:
-    """Derive per-symbol metrics from the stored transaction list.
-    Used to backfill old reports that predate the per_symbol_metrics field.
-    Each exit transaction (pnl != null) is treated as one round-trip result.
+    """Derive per-symbol metrics from stored transactions (backfill for old reports).
+
+    Computes the same fields as BacktestResult.per_symbol_metrics() using pure Python
+    so the server has no pandas dependency. Daily-series stats (Sharpe, DD, monthly)
+    use the same realized-PnL-normalized-by-initial-equity method as the engine.
     """
-    fills: dict = {}
-    total_pnl: dict = {}
-    round_trips: dict = {}
-    wins: dict = {}
-    gross_win: dict = {}
-    gross_loss: dict = {}
+    from collections import defaultdict
+
+    fills:      dict = defaultdict(int)
+    total_pnl:  dict = defaultdict(float)
+    rt_count:   dict = defaultdict(int)
+    win_count:  dict = defaultdict(int)
+    gross_win:  dict = defaultdict(float)
+    gross_loss: dict = defaultdict(float)
+    daily_pnl:  dict = defaultdict(lambda: defaultdict(float))   # sym -> date -> pnl
 
     for t in transactions:
         sym = t.get("asset")
         if not sym:
             continue
-        fills[sym] = fills.get(sym, 0) + 1
+        fills[sym] += 1
         p = t.get("pnl")
+        d = t.get("date")
         if p is not None:
-            total_pnl[sym] = total_pnl.get(sym, 0.0) + p
-            round_trips[sym] = round_trips.get(sym, 0) + 1
+            total_pnl[sym] += p
+            rt_count[sym]  += 1
+            if d:
+                daily_pnl[sym][d] += p
             if p > 0:
-                wins[sym] = wins.get(sym, 0) + 1
-                gross_win[sym] = gross_win.get(sym, 0.0) + p
+                win_count[sym] += 1
+                gross_win[sym] += p
             else:
-                gross_loss[sym] = gross_loss.get(sym, 0.0) + abs(p)
+                gross_loss[sym] += abs(p)
+
+    all_dates = sorted({t["date"] for t in transactions if t.get("date")})
 
     result = {}
     for sym in fills:
-        tp = round(total_pnl.get(sym, 0.0), 2)
-        rt = round_trips.get(sym, 0)
-        w = wins.get(sym, 0)
-        gw = gross_win.get(sym, 0.0)
-        gl = gross_loss.get(sym, 0.0)
+        tp = round(total_pnl[sym], 2)
+        rt = rt_count[sym]
+        wc = win_count[sym]
+        gw = gross_win[sym]
+        gl = gross_loss[sym]
+        ie = initial_equity or 100_000.0
+
+        # Daily PnL series (realized, aligned to all portfolio dates)
+        sym_daily = [daily_pnl[sym].get(d, 0.0) for d in all_dates]
+        daily_ret = [p / ie for p in sym_daily]
+
+        # Sharpe (annualised √252)
+        n = len(daily_ret)
+        mean_r = sum(daily_ret) / n if n else 0.0
+        std_r  = _math.sqrt(sum((r - mean_r) ** 2 for r in daily_ret) / (n - 1)) if n > 1 else 0.0
+        sharpe = round((mean_r / std_r) * _math.sqrt(252), 2) if std_r > 0 else 0.0
+
+        # Max drawdown on cumulative realized PnL / initial_equity
+        cum = 0.0
+        peak = 0.0
+        max_dd = 0.0
+        for p in sym_daily:
+            cum += p
+            peak = max(peak, cum)
+            max_dd = min(max_dd, (cum - peak) / ie * 100)
+
+        # Monthly returns
+        monthly_agg: dict = defaultdict(float)
+        for d, p in zip(all_dates, sym_daily):
+            monthly_agg[d[:7]] += p
+        monthly_rets = {k: round(v / ie * 100, 2) for k, v in sorted(monthly_agg.items())}
+        avg_monthly  = round(sum(monthly_rets.values()) / len(monthly_rets), 2) if monthly_rets else 0.0
+
         result[sym] = {
-            "total_pnl": tp,
-            "return_pct": round(tp / initial_equity * 100, 2) if initial_equity else None,
-            "fills": fills[sym],
-            "round_trips": rt,
-            "win_count": w,
-            "gross_win": round(gw, 2),
-            "gross_loss": round(gl, 2),
-            "win_rate_pct": round(w / rt * 100, 1) if rt else None,
-            "profit_factor": round(gw / gl, 2) if gl > 0 else None,
-            "expectancy": round(tp / rt, 2) if rt else None,
+            "total_pnl":          tp,
+            "return_pct":         round(tp / ie * 100, 2),
+            "fills":              fills[sym],
+            "round_trips":        rt,
+            "win_count":          wc,
+            "gross_win":          round(gw, 2),
+            "gross_loss":         round(gl, 2),
+            "win_rate_pct":       round(wc / rt * 100, 1) if rt else None,
+            "profit_factor":      round(gw / gl, 2) if gl > 0 else None,
+            "expectancy":         round(tp / rt, 2) if rt else None,
+            "sharpe_ratio":       sharpe,
+            "max_drawdown_pct":   round(max_dd, 2),
+            "monthly_return_pct": avg_monthly,
+            "monthly_breakdown":  monthly_rets,
         }
     return result
 
@@ -119,15 +163,21 @@ def list_experiments():
                 txns = data.get("transactions", [])
                 init_eq = (data.get("metrics") or {}).get("initial_equity", 100000)
                 ps = _per_symbol_from_txns(txns, init_eq)
+            hist = data.get("historical") or {}
             experiments.append({
-                "slug": data.get("slug", path.stem),
-                "status": data.get("status", "in_progress"),
-                "ran_at": data.get("ran_at"),
-                "rules": data.get("rules", []),
-                "metadata": data.get("metadata", {}),
-                "metrics": data.get("metrics", {}),
-                "extended_metrics": data.get("extended_metrics", {}),
-                "per_symbol_metrics": ps,
+                "slug":                  data.get("slug", path.stem),
+                "status":                data.get("status", "in_progress"),
+                "ran_at":                data.get("ran_at"),
+                "rules":                 data.get("rules", []),
+                "metadata":              data.get("metadata", {}),
+                "metrics":               data.get("metrics", {}),
+                "extended_metrics":      data.get("extended_metrics", {}),
+                "per_symbol_metrics":    ps,
+                "buy_and_hold":                  (data.get("metadata") or {}).get("buy_and_hold", {}),
+                # Historical (2025) summary — empty dicts if run predates this feature
+                "historical_metrics":           hist.get("metrics", {}),
+                "historical_per_symbol_metrics": hist.get("per_symbol_metrics", {}),
+                "historical_buy_and_hold":       hist.get("buy_and_hold", {}),
             })
         except Exception as e:
             logger.warning("Skipping unreadable report %s: %s", path.name, e)

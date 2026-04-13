@@ -108,19 +108,19 @@ class VWAPMomentumStrategy(Strategy):
 
             # Manage open position
             if current_qty > 0:   # long — riding upward momentum
-                if price <= st["stop_level"]:
+                if st["stop_level"] is not None and price <= st["stop_level"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"stop {price:.2f}<={st['stop_level']:.2f}"))
-                elif price >= st["take_profit"]:
+                elif st["take_profit"] is not None and price >= st["take_profit"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"target {price:.2f}>={st['take_profit']:.2f}"))
                 continue
 
             if current_qty < 0:   # short — riding downward momentum
-                if price >= st["stop_level"]:
+                if st["stop_level"] is not None and price >= st["stop_level"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"stop {price:.2f}>={st['stop_level']:.2f}"))
-                elif price <= st["take_profit"]:
+                elif st["take_profit"] is not None and price <= st["take_profit"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"target {price:.2f}<={st['take_profit']:.2f}"))
                 continue

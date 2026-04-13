@@ -7,6 +7,7 @@ Both return the same iterator interface consumed by the backtest engine.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, Iterator, List
 
@@ -97,16 +98,24 @@ def load_bars_alpaca(
     dfs: Dict[str, pd.DataFrame] = {}
     symbols_to_fetch: List[str] = []
 
-    for symbol in symbols:
-        cached = load_cached(symbol, start, end, interval)
-        if cached is not None and not cached.empty:
-            dfs[symbol] = cached
-        else:
-            symbols_to_fetch.append(symbol)
+    # Check cache in parallel (disk I/O benefits from threading)
+    def _check_cache(sym):
+        return sym, load_cached(sym, start, end, interval)
+
+    with ThreadPoolExecutor(max_workers=min(len(symbols), 8)) as pool:
+        for sym, cached in pool.map(_check_cache, symbols):
+            if cached is not None and not cached.empty:
+                logger.info("  [cache] %-6s  %d bars", sym, len(cached))
+                dfs[sym] = cached
+            else:
+                symbols_to_fetch.append(sym)
 
     if not symbols_to_fetch:
+        logger.info("All %d symbols loaded from cache.", len(dfs))
         return dfs
 
+    logger.info("Fetching %d symbol(s) from Alpaca: %s",
+                len(symbols_to_fetch), " ".join(symbols_to_fetch))
     client = StockHistoricalDataClient(api_key, secret_key)
     request = StockBarsRequest(
         symbol_or_symbols=symbols_to_fetch,
@@ -115,8 +124,10 @@ def load_bars_alpaca(
         end=end,
         feed="iex",
     )
+    logger.info("Sending request to Alpaca API…")
     barset = client.get_stock_bars(request)
     raw_df = barset.df  # MultiIndex (symbol, timestamp)
+    logger.info("Alpaca response received. Parsing %d symbols…", len(symbols_to_fetch))
 
     for symbol in symbols_to_fetch:
         try:
@@ -126,7 +137,7 @@ def load_bars_alpaca(
             sdf = sdf[["Open", "High", "Low", "Close", "Volume"]]
             dfs[symbol] = sdf
             save_to_cache(symbol, interval, sdf)
-            logger.info("Loaded %d bars for %s (Alpaca)", len(sdf), symbol)
+            logger.info("  [api]   %-6s  %d bars  (cached)", symbol, len(sdf))
         except KeyError:
             logger.warning("No Alpaca data for %s", symbol)
 

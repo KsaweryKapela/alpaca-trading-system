@@ -29,17 +29,17 @@
           <thead>
             <tr>
               <th></th>
-              <th>Slug</th>
-              <th>Strategy</th>
-              <th>Assets</th>
-              <th>Interval</th>
-              <th>Return</th>
-              <th>Monthly</th>
-              <th>Sharpe</th>
-              <th>DD</th>
-              <th>Fills</th>
-              <th>Win%</th>
-              <th>Status</th>
+              <th data-col="slug">Slug</th>
+              <th data-col="strategy">Strategy</th>
+              <th data-col="assets">Assets</th>
+              <th data-col="interval">Interval</th>
+              <th data-col="return">Return</th>
+              <th data-col="bah">B&amp;H</th>
+              <th data-col="ly">Return '25</th>
+              <th data-col="bah25">B&amp;H '25</th>
+              <th data-col="dd">DD</th>
+              <th data-col="fills">Fills</th>
+              <th data-col="status">Status</th>
             </tr>
           </thead>
           <tbody id="expBody">
@@ -70,47 +70,74 @@
       </div>
 
       <!-- Metrics -->
-      <section class="panel metrics-panel">
-        <div id="metricsGrid" class="metrics-grid"></div>
+      <section class="panel metrics-panel" id="sec-metrics">
+        <h2 class="section-toggle" onclick="toggleSection('metrics')">Metrics <span class="caret">▾</span></h2>
+        <div class="section-body">
+          <div id="metricsGrid" class="metrics-grid"></div>
+        </div>
       </section>
 
       <!-- Calendar -->
-      <section class="panel calendar-panel">
-        <h2>Trade Calendar</h2>
-        <p class="calendar-hint">Hover over a highlighted day to see that day's trades.</p>
-        <div id="calendarView" class="calendar-view"></div>
+      <section class="panel calendar-panel" id="sec-calendar">
+        <h2 class="section-toggle" onclick="toggleSection('calendar')">Trade Calendar <span class="caret">▾</span></h2>
+        <div class="section-body">
+          <p class="calendar-hint">Hover over a highlighted day to see that day's trades.</p>
+          <div id="calendarView" class="calendar-view"></div>
+        </div>
       </section>
 
       <!-- Tooltip (positioned by JS) -->
       <div id="tooltip" class="tooltip hidden"></div>
 
       <!-- Rules -->
-      <section class="panel rules-panel">
-        <h2>Strategy Rules</h2>
-        <ul id="rulesList"></ul>
+      <section class="panel rules-panel" id="sec-rules">
+        <h2 class="section-toggle" onclick="toggleSection('rules')">Strategy Rules <span class="caret">▾</span></h2>
+        <div class="section-body">
+          <ul id="rulesList"></ul>
+        </div>
       </section>
 
       <!-- Transactions -->
-      <section class="panel txn-panel">
-        <h2>Daily Transactions</h2>
-        <div class="table-wrap">
-          <table id="txnTable">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Time (ET)</th>
-                <th>Asset</th>
-                <th>Side</th>
-                <th>Lev</th>
-                <th>Size</th>
-                <th>Price</th>
-                <th>PnL</th>
-              </tr>
-            </thead>
-            <tbody id="txnBody"></tbody>
-          </table>
+      <section class="panel txn-panel" id="sec-txn">
+        <h2 class="section-toggle" onclick="toggleSection('txn')">Daily Transactions <span class="caret">▾</span></h2>
+        <div class="section-body">
+          <div class="table-wrap">
+            <table id="txnTable">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Time (ET)</th>
+                  <th>Asset</th>
+                  <th>Side</th>
+                  <th>Lev</th>
+                  <th>Size</th>
+                  <th>Price</th>
+                  <th>PnL</th>
+                </tr>
+              </thead>
+              <tbody id="txnBody"></tbody>
+            </table>
+          </div>
         </div>
       </section>
+
+      <!-- Historical (2025) validation -->
+      <div id="historicalView" class="hidden">
+        <section class="panel historical-panel" id="sec-hist-metrics">
+          <h2 class="section-toggle" onclick="toggleSection('hist-metrics')">2025 Historical Validation <span class="hist-window"></span> <span class="caret">▾</span></h2>
+          <div class="section-body">
+            <p class="calendar-hint">Full-year 2025 backtest — same strategy, same parameters.</p>
+            <div id="historicalMetrics" class="metrics-grid"></div>
+          </div>
+        </section>
+        <section class="panel calendar-panel" id="sec-hist-calendar">
+          <h2 class="section-toggle" onclick="toggleSection('hist-calendar')">2025 Trade Calendar <span class="caret">▾</span></h2>
+          <div class="section-body">
+            <p class="calendar-hint">Hover over a highlighted day to see that day's trades.</p>
+            <div id="historicalCalendar" class="calendar-view"></div>
+          </div>
+        </section>
+      </div>
 
     </div><!-- /expView -->
 

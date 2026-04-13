@@ -17,11 +17,14 @@ To invalidate the cache for a symbol, delete the corresponding parquet file.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
+
+_write_lock = threading.Lock()  # prevent concurrent writes to the same cache file
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,8 @@ def load_cached(
         req_start = pd.Timestamp(_to_utc(start))
         req_end = pd.Timestamp(_to_utc(end))
 
-        if cache_start > req_start or cache_end < req_end - pd.Timedelta(days=1):
+        # Compare dates only — first bar is at market open (14:30 UTC), not midnight
+        if cache_start.date() > req_start.date() or cache_end.date() < (req_end - pd.Timedelta(days=1)).date():
             return None  # cache doesn't cover full requested range
 
         sliced = df[(df.index >= req_start) & (df.index < req_end)].copy()
@@ -83,15 +87,15 @@ def save_to_cache(
     path = _cache_file(symbol, interval)
 
     try:
-        if path.exists():
-            existing = pd.read_parquet(path)
-            existing.index = pd.to_datetime(existing.index, utc=True)
-            merged = pd.concat([existing, df]).sort_index()
-            merged = merged[~merged.index.duplicated(keep="last")]
-        else:
-            merged = df.copy().sort_index()
-
-        merged.to_parquet(path)
+        with _write_lock:
+            if path.exists():
+                existing = pd.read_parquet(path)
+                existing.index = pd.to_datetime(existing.index, utc=True)
+                merged = pd.concat([existing, df]).sort_index()
+                merged = merged[~merged.index.duplicated(keep="last")]
+            else:
+                merged = df.copy().sort_index()
+            merged.to_parquet(path)
         logger.debug("Cached %d bars for %s (%s)", len(merged), symbol, interval)
     except Exception as exc:
         logger.warning("Cache write failed for %s/%s: %s", symbol, interval, exc)

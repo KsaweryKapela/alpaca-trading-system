@@ -7,11 +7,18 @@ const state = {
   // null  = no filter (show all assets)
   // Set   = explicit selection; empty Set = show nothing
   selectedAssets: null,
+  // Collapsed sections — persists across experiment/asset switches.
+  // key = section id string, value = true (collapsed) / false (expanded)
+  collapsed: {},
+  // Table sort — col = data-col string, dir = 1 (asc) / -1 (desc)
+  sort: { col: null, dir: 1 },
 };
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   document.getElementById("refreshBtn").addEventListener("click", loadExperiments);
+  document.getElementById("assetFilterChips").addEventListener("mouseleave", onChipsMouseLeave);
+  initSortHeaders();
   // Initialise global asset filter with the full universe before loading experiments
   const uResp = await fetch("/api/universe");
   const universe = await uResp.json();
@@ -29,6 +36,50 @@ async function loadExperiments() {
     const still = state.experiments.find(e => e.slug === state.activeSlug);
     if (still) loadExperiment(state.activeSlug);
   }
+}
+
+// ── Experiment list sorting ───────────────────────────────────────────────────
+
+function initSortHeaders() {
+  document.querySelectorAll("#expTable thead th[data-col]").forEach(th => {
+    th.classList.add("sortable");
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      state.sort.dir = state.sort.col === col ? state.sort.dir * -1 : 1;
+      state.sort.col = col;
+      renderExpList(state.experiments);
+    });
+  });
+}
+
+function sortKey(exp, col) {
+  const m    = exp.metrics || {};
+  const hm   = exp.historical_metrics || {};
+  const meta = exp.metadata || {};
+  const NEG  = -Infinity;
+  switch (col) {
+    case "slug":     return exp.slug || "";
+    case "strategy": return meta.strategy_label || meta.strategy || "";
+    case "assets":   return (meta.symbols || []).length;
+    case "interval": return meta.interval || "";
+    case "return":   return m.total_return_pct ?? NEG;
+    case "bah":      return buyAndHoldReturn(exp.buy_and_hold) ?? NEG;
+    case "ly":       return hm.total_return_pct ?? NEG;
+    case "bah25":    return buyAndHoldReturn(exp.historical_buy_and_hold) ?? NEG;
+    case "dd":       return m.max_drawdown_pct ?? NEG;
+    case "fills":    return m.fills ?? NEG;
+    case "status":   return ["promising","revised","in_progress","rejected"].indexOf(exp.status);
+    default:         return "";
+  }
+}
+
+function applySortIndicators() {
+  document.querySelectorAll("#expTable thead th[data-col]").forEach(th => {
+    const label = th.dataset.col === state.sort.col
+      ? th.textContent.replace(/ [▲▼]$/, "") + (state.sort.dir === 1 ? " ▲" : " ▼")
+      : th.textContent.replace(/ [▲▼]$/, "");
+    th.textContent = label;
+  });
 }
 
 // ── Experiment list ───────────────────────────────────────────────────────────
@@ -77,45 +128,72 @@ function renderExpList(experiments) {
     return;
   }
 
+  // Sort
+  const sorted = state.sort.col
+    ? [...experiments].sort((a, b) => {
+        const ka = sortKey(a, state.sort.col);
+        const kb = sortKey(b, state.sort.col);
+        if (ka < kb) return -state.sort.dir;
+        if (ka > kb) return  state.sort.dir;
+        return 0;
+      })
+    : experiments;
+  applySortIndicators();
+
   const isAll = state.selectedAssets === null;
   const dash  = "—";
   const na    = '<span class="dim">n/a</span>';
 
   tbody.innerHTML = "";
-  for (const exp of experiments) {
+  for (const exp of sorted) {
     const m    = exp.metrics || {};
-    const x    = exp.extended_metrics || {};
+    const hm   = exp.historical_metrics || {};
+    const hps  = exp.historical_per_symbol_metrics || {};
     const meta = exp.metadata || {};
     const assets = meta.symbols || [];
     const assetStr = assets.length <= 4 ? assets.join(", ")
                    : `${assets.slice(0, 3).join(", ")} +${assets.length - 3}`;
 
-    let retCell, monthlyCell, sharpeCell, ddCell, fillsCell, wrCell;
+    let retCell, ddCell, fillsCell, lastYearCell;
+
+    // B&H columns — filter-aware, reuse existing helper
+    const bahVal   = buyAndHoldReturn(exp.buy_and_hold);
+    const bah25Val = buyAndHoldReturn(exp.historical_buy_and_hold);
+    const bahCell   = bahVal   != null ? `<span class="${colorCls(bahVal)}">${fmt(bahVal, "%", true)}</span>`   : dash;
+    const bah25Cell = bah25Val != null ? `<span class="${colorCls(bah25Val)}">${fmt(bah25Val, "%", true)}</span>` : dash;
+
+    // Helper: last-year cell for a given return value
+    const lyCell = v => v != null ? `<span class="${colorCls(v)}">${fmt(v, "%", true)}</span>` : dash;
 
     if (isAll) {
-      // Overall metrics
-      retCell     = `<span class="${colorCls(m.total_return_pct)}">${fmt(m.total_return_pct, "%", true)}</span>`;
-      monthlyCell = `<span class="${colorCls(m.monthly_return_pct)}">${fmt(m.monthly_return_pct, "%", true)}</span>`;
-      sharpeCell  = `<span class="${colorCls(m.sharpe_ratio)}">${fmt(m.sharpe_ratio)}</span>`;
-      ddCell      = `<span class="${colorCls(m.max_drawdown_pct)}">${fmt(m.max_drawdown_pct, "%", true)}</span>`;
-      fillsCell   = m.fills ?? dash;
-      wrCell      = x.win_rate_pct != null ? `<span class="${colorCls(x.win_rate_pct - 50)}">${x.win_rate_pct}%</span>` : dash;
+      retCell      = `<span class="${colorCls(m.total_return_pct)}">${fmt(m.total_return_pct, "%", true)}</span>`;
+      ddCell       = `<span class="${colorCls(m.max_drawdown_pct)}">${fmt(m.max_drawdown_pct, "%", true)}</span>`;
+      fillsCell    = m.fills ?? dash;
+      lastYearCell = lyCell(hm.total_return_pct);
     } else {
       const agg = aggregateSelected(exp, state.selectedAssets);
       if (agg.empty) {
-        // "None" selected
-        retCell = monthlyCell = sharpeCell = ddCell = fillsCell = wrCell = dash;
+        retCell = ddCell = fillsCell = lastYearCell = dash;
       } else if (agg.notTested) {
-        // Symbol(s) not in this experiment
-        retCell = monthlyCell = sharpeCell = ddCell = fillsCell = wrCell = na;
+        retCell = ddCell = fillsCell = lastYearCell = na;
+      } else if (state.selectedAssets.size === 1) {
+        const sym = [...state.selectedAssets][0];
+        const ps  = (exp.per_symbol_metrics || {})[sym];
+        const hpsSym = hps[sym];
+        if (ps) {
+          retCell   = `<span class="${colorCls(ps.return_pct)}">${fmt(ps.return_pct, "%", true)}</span>`;
+          ddCell    = ps.max_drawdown_pct != null ? `<span class="${colorCls(ps.max_drawdown_pct)}">${fmt(ps.max_drawdown_pct, "%", true)}</span>` : dash;
+          fillsCell = ps.fills ?? dash;
+        } else {
+          retCell = ddCell = fillsCell = na;
+        }
+        // Use per-symbol historical return if available, else overall
+        lastYearCell = hpsSym ? lyCell(hpsSym.return_pct) : lyCell(hm.total_return_pct);
       } else {
-        // Subset stats — Sharpe/DD/Monthly need equity curve, not available per-symbol
-        retCell     = `<span class="${colorCls(agg.ret)}">${fmt(agg.ret, "%", true)}</span>`;
-        monthlyCell = dash;
-        sharpeCell  = dash;
-        ddCell      = dash;
-        fillsCell   = agg.fills ?? dash;
-        wrCell      = agg.winRate != null ? `<span class="${colorCls(agg.winRate - 50)}">${agg.winRate}%</span>` : dash;
+        retCell      = `<span class="${colorCls(agg.ret)}">${fmt(agg.ret, "%", true)}</span>`;
+        ddCell       = dash;
+        fillsCell    = agg.fills ?? dash;
+        lastYearCell = lyCell(hm.total_return_pct);
       }
     }
 
@@ -132,11 +210,11 @@ function renderExpList(experiments) {
       <td class="col-assets" title="${assets.join(', ')}">${assetStr}</td>
       <td class="col-mono">${meta.interval || "—"}</td>
       <td>${retCell}</td>
-      <td>${monthlyCell}</td>
-      <td>${sharpeCell}</td>
+      <td>${bahCell}</td>
+      <td>${lastYearCell}</td>
+      <td>${bah25Cell}</td>
       <td>${ddCell}</td>
       <td>${fillsCell}</td>
-      <td>${wrCell}</td>
       <td><span class="status-pill ${statusCls(exp.status)}">${exp.status}</span></td>
     `;
     tr.addEventListener("click", () => loadExperiment(exp.slug));
@@ -167,31 +245,56 @@ async function loadExperiment(slug) {
 }
 
 // ── Asset filter ──────────────────────────────────────────────────────────────
+
+// _preHover: undefined = not hovering; any other value = saved selection before hover
+let _preHover = undefined;
+
+function onChipMouseEnter(sym) {
+  if (_preHover === undefined) _preHover = state.selectedAssets;  // save on first enter
+  state.selectedAssets = new Set([sym]);
+  document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.sym === sym);
+  });
+  applyAssetFilter();
+}
+
+function onChipsMouseLeave() {
+  if (_preHover === undefined) return;
+  state.selectedAssets = _preHover;
+  _preHover = undefined;
+  document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
+    c.classList.toggle("active", state.selectedAssets === null || state.selectedAssets.has(c.dataset.sym));
+  });
+  applyAssetFilter();
+}
+
 function buildAssetFilter(symbols) {
   const container = document.getElementById("assetFilterChips");
   container.innerHTML = "";
   for (const sym of symbols) {
-    // Active when: no filter (null = all) OR this symbol is in the explicit set
     const active = state.selectedAssets === null || state.selectedAssets.has(sym);
     const btn = document.createElement("button");
     btn.className = "asset-chip" + (active ? " active" : "");
     btn.textContent = sym;
     btn.dataset.sym = sym;
     btn.addEventListener("click", () => toggleFilter(sym, btn));
+    btn.addEventListener("mouseenter", () => onChipMouseEnter(sym));
     container.appendChild(btn);
   }
 }
 
 function toggleFilter(sym, btn) {
-  // Radio-button style: click selects only this asset; click again returns to all.
-  const onlyThis = state.selectedAssets instanceof Set &&
-                   state.selectedAssets.size === 1 &&
-                   state.selectedAssets.has(sym);
+  // Use the pre-hover locked state (not the hover-modified one) to decide toggle.
+  // Without this, hovering already sets selectedAssets = Set([sym]), so a click
+  // would immediately see onlyThis=true and toggle back to null.
+  const locked = _preHover !== undefined ? _preHover : state.selectedAssets;
+  const onlyThis = locked instanceof Set && locked.size === 1 && locked.has(sym);
   if (onlyThis) {
     state.selectedAssets = null;  // back to all
   } else {
     state.selectedAssets = new Set([sym]);
   }
+  _preHover = undefined;  // commit click as new baseline so mouseleave won't undo it
   // Sync chip active states
   document.querySelectorAll("#assetFilterChips .asset-chip").forEach(c => {
     c.classList.toggle("active", state.selectedAssets === null || state.selectedAssets.has(c.dataset.sym));
@@ -218,6 +321,7 @@ function applyAssetFilter() {
   renderMetrics(...computeFilteredMetrics(txns, state.active.metadata));
   renderTransactions(txns);
   renderCalendar(state.active.calendar || []);
+  renderHistorical(state.active.historical || null);
 }
 
 // ── Compute metrics from filtered transactions ────────────────────────────────
@@ -302,9 +406,11 @@ function renderMetrics(m, x, meta, partial) {
   const sharpeCls  = m.sharpe_ratio  != null ? colorCls(m.sharpe_ratio) : "dim";
   const ddCls      = m.max_drawdown_pct != null ? colorCls(m.max_drawdown_pct) : "dim";
 
+  const bah = buyAndHoldReturn(meta?.buy_and_hold);
   const cards = [
     { label: "Total Return",   value: fmt(m.total_return_pct, "%", true),    cls: colorCls(m.total_return_pct) },
     { label: "Monthly Return", value: fmt(m.monthly_return_pct, "%", true),  cls: colorCls(m.monthly_return_pct) },
+    { label: "Buy & Hold",     value: bah != null ? fmt(bah, "%", true) : "—", cls: colorCls(bah) },
     { label: "Sharpe",         value: sharpeVal,  cls: sharpeCls },
     { label: "Max Drawdown",   value: ddVal,      cls: ddCls },
     { label: "Fills",          value: m.fills ?? "—",  cls: "" },
@@ -328,19 +434,18 @@ function renderMetrics(m, x, meta, partial) {
   }
 
   // Show a subtle note when showing partial (per-asset) metrics
+  document.querySelector(".metrics-note")?.remove();
   if (partial) {
     const note = document.createElement("div");
     note.className = "metrics-note";
     note.textContent = "Showing realized PnL for selected assets. Sharpe and Max DD require full run.";
     grid.after(note);
-  } else {
-    document.querySelector(".metrics-note")?.remove();
   }
 }
 
 // ── Calendar with hover ───────────────────────────────────────────────────────
-function renderCalendar(calData) {
-  const view = document.getElementById("calendarView");
+function renderCalendar(calData, containerId = "calendarView") {
+  const view = document.getElementById(containerId);
   view.innerHTML = "";
 
   // Filter calendar data to selected assets
@@ -363,14 +468,22 @@ function renderCalendar(calData) {
 
   const DAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
+  const initEq = state.active?.metrics?.initial_equity || 100000;
+
   for (const [month, days] of Object.entries(months).sort()) {
     const [year, mon] = month.split("-").map(Number);
     const monthDiv = document.createElement("div");
     monthDiv.className = "cal-month";
 
+    const monthPnl = days.reduce((s, d) => s + (d.pnl || 0), 0);
+    const monthPct = monthPnl / initEq * 100;
+    const pctStr   = (monthPct >= 0 ? "+" : "") + monthPct.toFixed(2) + "%";
+    const pctCls   = monthPct > 0 ? "pos" : monthPct < 0 ? "neg" : "dim";
+    const monthName = new Date(year, mon - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
+
     const label = document.createElement("div");
     label.className = "cal-month-label";
-    label.textContent = new Date(year, mon - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
+    label.innerHTML = `<span>${monthName}</span><span class="cal-month-pct ${pctCls}">${pctStr}</span>`;
     monthDiv.appendChild(label);
 
     const header = document.createElement("div");
@@ -534,6 +647,97 @@ function renderTransactions(txns) {
     `;
     tbody.appendChild(tr);
   }
+}
+
+// ── Historical (2025) section ─────────────────────────────────────────────────
+function renderHistorical(hist) {
+  const view = document.getElementById("historicalView");
+  if (!hist || !hist.metrics) { view.classList.add("hidden"); return; }
+  view.classList.remove("hidden");
+
+  // Update window label
+  document.querySelector(".hist-window").textContent = hist.window || "";
+
+  // Determine metrics to show — per-symbol when one asset selected
+  const isAll = state.selectedAssets === null;
+  let m = hist.metrics || {};
+  let x = hist.extended_metrics || {};
+  let partial = false;
+
+  if (!isAll && state.selectedAssets.size === 1) {
+    const sym = [...state.selectedAssets][0];
+    const ps = (hist.per_symbol_metrics || {})[sym];
+    if (ps) {
+      m = {
+        total_return_pct:  ps.return_pct,
+        monthly_return_pct: ps.monthly_return_pct,
+        sharpe_ratio:      ps.sharpe_ratio,
+        max_drawdown_pct:  ps.max_drawdown_pct,
+        fills:             ps.fills,
+        initial_equity:    (hist.metrics || {}).initial_equity,
+        final_equity:      null,
+      };
+      x = {
+        round_trips:    ps.round_trips,
+        win_rate_pct:   ps.win_rate_pct,
+        profit_factor:  ps.profit_factor,
+        expectancy:     ps.expectancy,
+      };
+      partial = true;
+    } else {
+      // Symbol not tested in this run — show overall
+    }
+  }
+
+  // Render metrics into historicalMetrics grid
+  const grid = document.getElementById("historicalMetrics");
+  grid.innerHTML = "";
+  const sharpeVal = m.sharpe_ratio  != null ? m.sharpe_ratio.toFixed(2) : "—";
+  const ddVal     = m.max_drawdown_pct != null ? fmt(m.max_drawdown_pct, "%", true) : "—";
+  const histBah   = buyAndHoldReturn(hist.buy_and_hold);
+  const cards = [
+    { label: "Total Return",   value: fmt(m.total_return_pct, "%", true),   cls: colorCls(m.total_return_pct) },
+    { label: "Monthly Return", value: fmt(m.monthly_return_pct, "%", true), cls: colorCls(m.monthly_return_pct) },
+    { label: "Buy & Hold",     value: histBah != null ? fmt(histBah, "%", true) : "—", cls: colorCls(histBah) },
+    { label: "Sharpe",         value: sharpeVal,  cls: colorCls(m.sharpe_ratio) },
+    { label: "Max Drawdown",   value: ddVal,      cls: colorCls(m.max_drawdown_pct) },
+    { label: "Fills",          value: m.fills ?? "—", cls: "" },
+    { label: "Round Trips",    value: x.round_trips ?? "—", cls: "" },
+    { label: "Win Rate",       value: x.win_rate_pct != null ? x.win_rate_pct + "%" : "—",
+                               cls: colorCls(x.win_rate_pct != null ? x.win_rate_pct - 50 : null) },
+    { label: "Profit Factor",  value: x.profit_factor?.toFixed(2) ?? "—",
+                               cls: colorCls(x.profit_factor != null ? x.profit_factor - 1 : null) },
+    { label: "Expectancy",     value: x.expectancy != null ? "$" + x.expectancy.toFixed(2) : "—",
+                               cls: colorCls(x.expectancy) },
+  ];
+  for (const c of cards) {
+    const div = document.createElement("div");
+    div.className = "metric-card";
+    div.innerHTML = `<div class="metric-label">${c.label}</div><div class="metric-value ${c.cls}">${c.value}</div>`;
+    grid.appendChild(div);
+  }
+
+  // Calendar — filter by selected assets the same way as primary
+  renderCalendar(hist.calendar || [], "historicalCalendar");
+}
+
+// ── Collapsible sections ──────────────────────────────────────────────────────
+function toggleSection(id) {
+  state.collapsed[id] = !state.collapsed[id];
+  const panel = document.getElementById("sec-" + id);
+  if (panel) panel.classList.toggle("collapsed", !!state.collapsed[id]);
+}
+
+// ── Buy & hold helper ─────────────────────────────────────────────────────────
+// Returns equal-weighted avg B&H return for the currently selected assets,
+// or null if data isn't available.
+function buyAndHoldReturn(bah) {
+  if (!bah || Object.keys(bah).length === 0) return null;
+  const syms = state.selectedAssets === null
+    ? Object.keys(bah)
+    : [...state.selectedAssets].filter(s => s in bah);
+  if (syms.length === 0) return null;
+  return Math.round(syms.reduce((s, sym) => s + bah[sym], 0) / syms.length * 100) / 100;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

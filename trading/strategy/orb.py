@@ -36,10 +36,12 @@ class ORBStrategy(Strategy):
         symbols: List[str],
         range_minutes: int = 15,
         stop_pct: float = 0.5,
+        direction: str = "both",  # "both" | "long_only" | "short_only"
     ) -> None:
         super().__init__(symbols)
         self.range_minutes = range_minutes
-        self.stop_pct = stop_pct          # % below/above entry to place stop
+        self.stop_pct = stop_pct
+        self.direction = direction
         self._state: Dict[str, dict] = {}
 
     def _fresh_day_state(self) -> dict:
@@ -58,10 +60,14 @@ class ORBStrategy(Strategy):
         self._state = {sym: self._fresh_day_state() for sym in self.symbols}
 
     def rules(self) -> List[str]:
+        direction_rule = {
+            "both": "Trade LONG breakouts above range-high AND SHORT breakdowns below range-low",
+            "long_only": "Trade LONG breakouts above range-high only (no shorts)",
+            "short_only": "Trade SHORT breakdowns below range-low only (no longs)",
+        }.get(self.direction, f"Direction: {self.direction}")
         return [
             f"Observe first {self.range_minutes} minutes of each day to establish the opening range",
-            f"Go LONG when price breaks above the range high",
-            f"Go SHORT when price breaks below the range low",
+            direction_rule,
             f"Stop loss: {self.stop_pct}% from entry price",
             f"Only one trade per asset per day — no re-entry after exit",
             f"All positions closed by 15:55 ET (EOD flatten by engine)",
@@ -119,13 +125,15 @@ class ORBStrategy(Strategy):
             pos = portfolio.get_position(symbol)
             current_qty = pos.quantity if pos else 0
 
-            if bar.close > st["range_high"] and current_qty == 0:
+            if (bar.close > st["range_high"] and current_qty == 0
+                    and self.direction in ("both", "long_only")):
                 signals.append(Signal(symbol, Direction.LONG, reason=f"ORB breakout up {bar.close:.2f}>{st['range_high']:.2f}"))
                 st["traded_today"] = True
                 st["position_side"] = "long"
                 st["stop_level"] = bar.close * (1 - self.stop_pct / 100)
 
-            elif bar.close < st["range_low"] and current_qty == 0:
+            elif (bar.close < st["range_low"] and current_qty == 0
+                    and self.direction in ("both", "short_only")):
                 signals.append(Signal(symbol, Direction.SHORT, reason=f"ORB breakdown {bar.close:.2f}<{st['range_low']:.2f}"))
                 st["traded_today"] = True
                 st["position_side"] = "short"

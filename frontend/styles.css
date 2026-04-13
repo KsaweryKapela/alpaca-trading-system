@@ -93,10 +93,30 @@ body {
   border: 1px solid var(--border);
 }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+/* Experiment list — resizable, 5-row default */
+.exp-list-panel .table-wrap {
+  height: 168px;
+  min-height: 60px;
+  resize: vertical;
+}
+
+/* Thin dark scrollbar to match theme */
+.table-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+.table-wrap::-webkit-scrollbar-track { background: var(--surface); }
+.table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.table-wrap::-webkit-scrollbar-thumb:hover { background: var(--ink-dim); }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
   text-align: left;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
@@ -109,6 +129,8 @@ thead th {
 tbody tr { border-bottom: 1px solid var(--border); }
 tbody td { padding: 6px 10px; white-space: nowrap; }
 
+thead th.sortable { cursor: pointer; user-select: none; }
+thead th.sortable:hover { color: var(--ink); }
 .exp-row { cursor: pointer; transition: background .1s; }
 .exp-row:hover { background: var(--surface2); }
 .exp-row.row-active { background: #1e2540; }
@@ -140,6 +162,26 @@ tbody td { padding: 6px 10px; white-space: nowrap; }
 .col-mono { font-family: var(--font); }
 .col-slug { font-weight: 600; color: var(--ink); }
 .col-assets { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Collapsible sections ────────────────────────────────────────────────── */
+.section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.section-toggle:hover { color: var(--ink); }
+.section-toggle .caret {
+  font-size: 9px;
+  color: var(--ink-dim);
+  margin-left: 8px;
+  transition: transform .15s;
+  flex-shrink: 0;
+}
+.panel.collapsed .section-toggle .caret { transform: rotate(-90deg); }
+.panel.collapsed .section-body { display: none; }
 
 /* ── Global asset filter ────────────────────────────────────────────────── */
 .filter-panel { padding: 10px 16px; }
@@ -226,6 +268,7 @@ tbody td { padding: 6px 10px; white-space: nowrap; }
 .metric-value.neg { color: var(--red); }
 .metric-value.dim { color: var(--ink-dim); }
 .dim { color: var(--ink-dim); }
+.hist-window { font-size: 11px; font-weight: 400; color: var(--ink-dim); }
 
 .metrics-note {
   grid-column: 1 / -1;
@@ -241,7 +284,8 @@ tbody td { padding: 6px 10px; white-space: nowrap; }
 .calendar-view { display: flex; flex-wrap: wrap; gap: 24px; }
 
 .cal-month { display: flex; flex-direction: column; gap: 3px; }
-.cal-month-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.cal-month-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.cal-month-pct { font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none; }
 .cal-week-header { display: grid; grid-template-columns: repeat(7, 28px); gap: 2px; }
 .cal-day-label { font-size: 9px; color: var(--ink-dim); text-align: center; }
 .cal-week { display: grid; grid-template-columns: repeat(7, 28px); gap: 2px; }

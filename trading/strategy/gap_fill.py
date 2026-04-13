@@ -114,10 +114,10 @@ class GapFillStrategy(Strategy):
 
             # Manage open position
             if current_qty > 0:   # long (gap-down fade)
-                if price <= st["stop_level"]:
+                if st["stop_level"] is not None and price <= st["stop_level"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"gap-fill long stop {price:.2f}<={st['stop_level']:.2f}"))
-                elif price >= st["take_profit"]:
+                elif st["take_profit"] is not None and price >= st["take_profit"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"gap filled {price:.2f}>={st['take_profit']:.2f}"))
                 # Update prev_close even while in position
@@ -125,10 +125,10 @@ class GapFillStrategy(Strategy):
                 continue
 
             if current_qty < 0:   # short (gap-up fade)
-                if price >= st["stop_level"]:
+                if st["stop_level"] is not None and price >= st["stop_level"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"gap-fill short stop {price:.2f}>={st['stop_level']:.2f}"))
-                elif price <= st["take_profit"]:
+                elif st["take_profit"] is not None and price <= st["take_profit"]:
                     signals.append(Signal(symbol, Direction.FLAT,
                                           reason=f"gap filled {price:.2f}<={st['take_profit']:.2f}"))
                 self._prev_close[symbol] = price

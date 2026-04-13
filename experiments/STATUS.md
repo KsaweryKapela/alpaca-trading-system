@@ -4,13 +4,14 @@
 
 ## Current Run
 
-None yet.
-
-## Run Summary
-
-| # | Slug | Strategy | Sharpe | PF | WR | Status |
-|---|---|---|---|---|---|---|
-
-## Key Learnings
+- **Slug:** 234_ds_expanded
+- **Strategy:** Dynamic Stock Selection + Tactics
+- **Status:** in_progress
+- **Total return:** 3.61%
+- **Monthly return:** 0.9%
+- **Sharpe:** 2.02
+- **Max drawdown:** -3.62%
 
 ## Next Action
+
+> Fill in after evaluating the run note.

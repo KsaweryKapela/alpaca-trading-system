@@ -6,12 +6,14 @@ Handles long entries, long exits, short entries, and short covers.
 
 import logging
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from .base import Executor
 from ..config import BacktestConfig
 from ..models import Order, OrderStatus, Side
 
 logger = logging.getLogger(__name__)
+ET = ZoneInfo("America/New_York")
 
 
 class SimulatedExecutor(Executor):
@@ -54,6 +56,12 @@ class SimulatedExecutor(Executor):
             order.commission = round(order.quantity * self.config.commission_per_share, 4)
             order.status = OrderStatus.FILLED
 
-            logger.debug("Simulated fill: %s", order)
+            ts_et = bar_time.astimezone(ET) if bar_time else None
+            date_str = ts_et.strftime("%Y-%m-%d %H:%M ET") if ts_et else "??"
+            side_label = ("SHORT" if order.is_short_entry else
+                          "COVER" if order.is_short_cover else
+                          order.side.value.upper())
+            logger.info("  [fill] %s  %-6s %-5s  ×%-4d @ $%.2f",
+                        date_str, order.symbol, side_label, order.quantity, order.fill_price)
 
         return orders
