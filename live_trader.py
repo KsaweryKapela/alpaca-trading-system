@@ -264,6 +264,89 @@ class LiveTrader:
                 for k in stale:
                     del bar_buffer[k]
 
+    @staticmethod
+    def _explain_signal(symbol: str, direction: str, reason: str,
+                        bars: Dict[str, Bar]) -> str:
+        """Translate raw signal reason into a human-readable explanation."""
+        bar = bars.get(symbol)
+        spy = bars.get("SPY")
+        vgk = bars.get("VGK")
+
+        sym_ret = ((bar.close - bar.open) / bar.open * 100) if bar and bar.open else None
+        spy_ret = ((spy.close - spy.open) / spy.open * 100) if spy and spy.open else None
+        vgk_ret = ((vgk.close - vgk.open) / vgk.open * 100) if vgk and vgk.open else None
+
+        rs = (sym_ret - spy_ret) if sym_ret is not None and spy_ret is not None else None
+
+        if "RS=" in reason:
+            rs_val = reason.split("RS=")[1]
+            return (
+                f"BEAR DAY SHORT — {symbol} is underperforming SPY by {rs_val} "
+                f"(stock {sym_ret:+.2f}% vs SPY {spy_ret:+.2f}%). "
+                f"Entry: SPY below VWAP + 3-day downtrend. Short open→15:35."
+            )
+        if "T1 +" in reason:
+            rs_val = reason.split("T1 +")[1]
+            return (
+                f"OVERNIGHT LONG (Tier 1, winner) — {symbol} is today's RS leader vs SPY "
+                f"(stock {sym_ret:+.2f}% vs SPY {spy_ret:+.2f}%, RS={rs:+.2f}%). "
+                f"Bull session: SPY>VWAP. Buy at close, sell 20min after tomorrow's open."
+            )
+        if "T1 dip" in reason:
+            rs_val = reason.split("T1 dip ")[1]
+            return (
+                f"OVERNIGHT LONG (Tier 1, dip buy) — {symbol} is today's weakest vs SPY "
+                f"(stock {sym_ret:+.2f}% vs SPY {spy_ret:+.2f}%, RS={rs:+.2f}%). "
+                f"Contrarian overnight on bull session (SPY>VWAP). Buy at close, sell 20min after open."
+            )
+        if "T2 +" in reason:
+            rs_val = reason.split("T2 +")[1]
+            vgk_str = f"VGK {vgk_ret:+.2f}%" if vgk_ret is not None else "VGK bullish"
+            return (
+                f"OVERNIGHT LONG (Tier 2, winner) — {symbol} RS leader "
+                f"(stock {sym_ret:+.2f}% vs SPY {spy_ret:+.2f}%). "
+                f"Global signal triggered: {vgk_str} (European markets up). "
+                f"Buy at close, sell 20min after tomorrow's open."
+            )
+        if "T2 dip" in reason:
+            vgk_str = f"VGK {vgk_ret:+.2f}%" if vgk_ret is not None else "VGK bullish"
+            return (
+                f"OVERNIGHT LONG (Tier 2, dip buy) — {symbol} RS laggard "
+                f"(stock {sym_ret:+.2f}% vs SPY {spy_ret:+.2f}%). "
+                f"Global signal: {vgk_str}. Buy at close, sell 20min after tomorrow's open."
+            )
+        if "stop" in reason.lower():
+            return f"EXIT (stop loss) — {symbol} hit the {2.0}% stop level."
+        if "target" in reason.lower():
+            return f"EXIT (profit target) — {symbol} hit the profit target."
+        if "exit" in reason.lower():
+            return f"EXIT (time) — {symbol} 20-min post-open window expired, closing overnight long."
+        if "RS close" in reason:
+            return f"EXIT (scheduled) — {symbol} RS short closing at 15:35 (margin overlay window)."
+        if "RS stop" in reason:
+            return f"EXIT (RS stop) — {symbol} short stop triggered."
+        if "RS target" in reason:
+            return f"EXIT (RS target) — {symbol} short hit profit target."
+        return f"{direction.upper()} {symbol} — {reason}"
+
+    def _log_market_context(self, bars: Dict[str, Bar]) -> None:
+        """Log SPY and VGK regime context for this minute."""
+        spy = bars.get("SPY")
+        vgk = bars.get("VGK")
+
+        if spy and spy.open:
+            spy_ret = (spy.close - spy.open) / spy.open * 100
+            # Rough regime guess: positive day return → likely above VWAP
+            regime = "BULL (SPY up today)" if spy_ret > 0 else "BEAR (SPY down today)"
+            log.info("[market] SPY  O=$%.2f  C=$%.2f  ret=%+.2f%%  regime=~%s",
+                     spy.open, spy.close, spy_ret, regime)
+
+        if vgk and vgk.open:
+            vgk_ret = (vgk.close - vgk.open) / vgk.open * 100
+            signal_str = "BULLISH — may trigger Tier 2 overnight entries" if vgk_ret > 0 else "BEARISH — no Tier 2 entries"
+            log.info("[market] VGK  O=$%.2f  C=$%.2f  ret=%+.2f%%  global_signal=%s",
+                     vgk.open, vgk.close, vgk_ret, signal_str)
+
     def _fire(self, bars: Dict[str, Bar], ts_key: str) -> None:
         """Run strategy + place orders for one completed minute."""
         spy_bar = bars.get("SPY")
@@ -296,9 +379,13 @@ class LiveTrader:
             log.debug("[strategy] no signals this bar")
             return
 
+        # Market context only when there's something to act on
+        self._log_market_context(bars)
+
         log.info("[strategy] %d signal(s):", len(signals))
         for s in signals:
-            log.info("    %-6s %-5s  reason=%s", s.symbol, s.direction.value.upper(), s.reason)
+            explanation = self._explain_signal(s.symbol, s.direction.value, s.reason, bars)
+            log.info("    %s", explanation)
 
         # Size orders via risk manager
         orders = self.risk.validate(signals, self.portfolio, prices)
@@ -309,8 +396,10 @@ class LiveTrader:
         log.info("[risk] %d order(s) approved:", len(orders))
         for o in orders:
             action = "COVER" if o.is_short_cover else ("SHORT" if o.is_short_entry else o.side.value.upper())
-            log.info("    %-5s %-6s ×%d  @ mkt (~$%.2f)",
-                     action, o.symbol, o.quantity, prices.get(o.symbol, 0))
+            log.info("    %-5s %-6s ×%d  @ mkt (~$%.2f each, total ~$%.0f)",
+                     action, o.symbol, o.quantity,
+                     prices.get(o.symbol, 0),
+                     o.quantity * prices.get(o.symbol, 0))
 
         # Place on Alpaca
         for order in orders:
