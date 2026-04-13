@@ -466,10 +466,40 @@ class LiveTrader:
         worker = threading.Thread(target=self._strategy_loop, daemon=True, name="strategy")
         worker.start()
 
-        # Subscribe and start WebSocket (blocking)
+        # Subscribe to bars
         self._stream.subscribe_bars(self._ws_on_bar, *SYMBOLS)
         log.info("[startup] WebSocket subscribed — waiting for market bars...")
-        self._stream.run()
+
+        # Run WebSocket with retry/backoff — never crash the process.
+        # "connection limit exceeded" means a previous instance is still alive on
+        # Alpaca's side; waiting lets it time out before we reconnect.
+        backoff = 30
+        while True:
+            try:
+                self._stream.run()
+                # stream.run() returned cleanly — shouldn't happen, restart it
+                log.warning("[ws] stream.run() returned unexpectedly, restarting in %ds", backoff)
+            except ValueError as exc:
+                if "connection limit" in str(exc).lower():
+                    log.warning(
+                        "[ws] connection limit exceeded (previous instance still alive on Alpaca). "
+                        "Waiting %ds before retry...", backoff,
+                    )
+                else:
+                    log.error("[ws] ValueError from stream: %s — retrying in %ds", exc, backoff)
+            except Exception as exc:
+                log.error("[ws] stream error: %s — retrying in %ds", exc, backoff)
+
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)  # exponential backoff, cap at 5 min
+            log.info("[ws] reconnecting (backoff now %ds)...", backoff)
+            # Reset stream for reconnect
+            self._stream = StockDataStream(
+                os.environ["ALPACA_API_KEY"],
+                os.environ["ALPACA_SECRET_KEY"],
+                feed=DataFeed.IEX,
+            )
+            self._stream.subscribe_bars(self._ws_on_bar, *SYMBOLS)
 
 
 if __name__ == "__main__":
