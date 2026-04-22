@@ -4,13 +4,13 @@
 
 ## Current Run
 
-- **Slug:** 234_ds_expanded
-- **Strategy:** Dynamic Stock Selection + Tactics
+- **Slug:** 250_v10_mega
+- **Strategy:** All-Weather v10 (Margin Overlay)
 - **Status:** in_progress
-- **Total return:** 3.61%
-- **Monthly return:** 0.9%
-- **Sharpe:** 2.02
-- **Max drawdown:** -3.62%
+- **Total return:** 7.89%
+- **Monthly return:** 1.93%
+- **Sharpe:** 2.63
+- **Max drawdown:** -5.64%
 
 ## Next Action
 

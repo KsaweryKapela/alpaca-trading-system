@@ -39,6 +39,11 @@ from .spy_reversion import SPYReversionStrategy
 from .gap_context import GapContextStrategy
 from .trend_regime import TrendRegimeStrategy
 from .dynamic_select import DynamicSelectStrategy
+from .gapper_momentum import GapperMomentumStrategy
+from .modular import ModularStrategy
+from .boosted_v10 import BoostedV10Strategy
+from .cross_momentum import CrossMomentumStrategy
+from .high_conviction import HighConvictionStrategy
 
 STRATEGIES = {
     "orb": ORBStrategy,
@@ -80,6 +85,11 @@ STRATEGIES = {
     "gap_context": GapContextStrategy,
     "trend_regime": TrendRegimeStrategy,
     "dynamic_select": DynamicSelectStrategy,
+    "gapper_momentum": GapperMomentumStrategy,
+    "modular": ModularStrategy,
+    "boosted_v10": BoostedV10Strategy,
+    "cross_momentum": CrossMomentumStrategy,
+    "high_conviction": HighConvictionStrategy,
 }
 
 __all__ = ["ORBStrategy", "VWAPReversionStrategy", "VWAPMomentumStrategy",

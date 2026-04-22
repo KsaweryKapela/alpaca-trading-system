@@ -334,6 +334,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--use-overnight-beta", action="store_true", default=True,
                    help="Prefer high overnight-gap stocks (allweather_v11)")
 
+    # Modular strategy selector type
+    p.add_argument("--selector", default="composite",
+                   choices=["composite", "adaptive", "abnormality", "momentum"],
+                   help="Stock selector type for modular strategy")
+
     # Morning Spike Fade params
     p.add_argument("--spike-pct", type=float, default=1.0,
                    help="Stock must be up/down this %% from open to trigger fade (morning_spike_fade)")
@@ -970,6 +975,149 @@ def make_strategy(strategy_id: str, symbols, args):
             "breadth_filter": breadth_on,
             "breadth_min_pct": getattr(args, 'breadth_min_pct', 45.0),
             "use_overnight_beta": getattr(args, 'use_overnight_beta', True),
+        }
+    elif strategy_id == "high_conviction":
+        hc_entry_h = getattr(args, 'itm_entry_hour', 15)
+        hc_entry_m = getattr(args, 'itm_entry_minute', 30)
+        if hc_entry_h == 10 and hc_entry_m == 0:
+            hc_entry_h, hc_entry_m = 15, 30
+        return cls(symbols,
+                   rs_threshold=args.rs_threshold,
+                   rs_stop_pct=args.stop_pct,
+                   rs_target_pct=args.profit_target_pct,
+                   spy_trend_days=args.spy_trend_days,
+                   rs_entry_after_min=max(args.entry_after_min, 30),
+                   rs_entry_end_hour=args.entry_end_hour,
+                   rs_close_hour=getattr(args, 'rs_close_hour', 15),
+                   rs_close_minute=getattr(args, 'rs_close_minute', 35),
+                   require_stock_below_vwap=True,
+                   rs_rvol_min=getattr(args, 'rvol_min', 1.5),
+                   spy_min_drop_pct=0.2,
+                   overnight_top_k=getattr(args, 'top_k', 5),
+                   overnight_bottom_k=getattr(args, 'bottom_k', 3),
+                   overnight_stop_pct=args.overnight_stop_pct,
+                   overnight_min_move=args.momentum_threshold,
+                   overnight_entry_hour=hc_entry_h,
+                   overnight_entry_minute=hc_entry_m,
+                   overnight_exit_after_min=args.exit_after_min,
+                   spy_min_rise_pct=0.1,
+                   on_rvol_min=getattr(args, 'rvol_min', 1.0),
+                   require_5d_momentum=True,
+                   global_signal_symbol=getattr(args, 'global_signal', 'VGK'),
+                   global_min_return=getattr(args, 'global_min_return', 0.0),
+                   tier2_top_k=getattr(args, 'tier2_top_k', 2),
+                   tier2_bottom_k=getattr(args, 'tier2_bottom_k', 2)), {
+            "rs_threshold": args.rs_threshold,
+            "rs_stop_pct": args.stop_pct,
+            "rs_target_pct": args.profit_target_pct,
+            "rs_rvol_min": getattr(args, 'rvol_min', 1.5),
+            "on_rvol_min": getattr(args, 'rvol_min', 1.0),
+            "require_stock_vwap": True,
+            "require_5d_momentum": True,
+            "exit_after_min": args.exit_after_min,
+        }
+    elif strategy_id == "cross_momentum":
+        cm_entry_h = getattr(args, 'itm_entry_hour', 15)
+        cm_entry_m = getattr(args, 'itm_entry_minute', 30)
+        if cm_entry_h == 10 and cm_entry_m == 0:
+            cm_entry_h, cm_entry_m = 15, 30
+        return cls(symbols,
+                   momentum_days=getattr(args, 'spy_trend_days', 5),
+                   long_k=getattr(args, 'top_k', 5),
+                   short_k=getattr(args, 'bottom_k', 5),
+                   overnight_stop_pct=args.overnight_stop_pct,
+                   entry_hour=cm_entry_h,
+                   entry_minute=cm_entry_m,
+                   exit_after_min=args.exit_after_min,
+                   use_intraday_rs=True,
+                   rs_weight=0.3), {
+            "momentum_days": getattr(args, 'spy_trend_days', 5),
+            "long_k": getattr(args, 'top_k', 5),
+            "short_k": getattr(args, 'bottom_k', 5),
+            "exit_after_min": args.exit_after_min,
+        }
+    elif strategy_id == "boosted_v10":
+        bv_entry_h = getattr(args, 'itm_entry_hour', 15)
+        bv_entry_m = getattr(args, 'itm_entry_minute', 30)
+        if bv_entry_h == 10 and bv_entry_m == 0:
+            bv_entry_h, bv_entry_m = 15, 30
+        return cls(symbols,
+                   rs_threshold=args.rs_threshold,
+                   rs_stop_pct=args.stop_pct,
+                   rs_target_pct=args.profit_target_pct,
+                   spy_trend_days=args.spy_trend_days,
+                   rs_entry_after_min=args.entry_after_min,
+                   rs_entry_end_hour=args.entry_end_hour,
+                   rs_close_hour=getattr(args, 'rs_close_hour', 15),
+                   rs_close_minute=getattr(args, 'rs_close_minute', 35),
+                   overnight_top_k=getattr(args, 'top_k', 4),
+                   overnight_bottom_k=getattr(args, 'bottom_k', 4),
+                   overnight_stop_pct=args.overnight_stop_pct,
+                   overnight_min_move=args.momentum_threshold,
+                   overnight_entry_hour=bv_entry_h,
+                   overnight_entry_minute=bv_entry_m,
+                   overnight_exit_after_min=args.exit_after_min,
+                   global_signal_symbol=getattr(args, 'global_signal', 'VGK'),
+                   global_min_return=getattr(args, 'global_min_return', 0.0),
+                   tier2_top_k=getattr(args, 'tier2_top_k', 2),
+                   tier2_bottom_k=getattr(args, 'tier2_bottom_k', 2)), {
+            "rs_threshold": args.rs_threshold,
+            "rs_stop_pct": args.stop_pct,
+            "rs_target_pct": args.profit_target_pct,
+            "exit_after_min": args.exit_after_min,
+            "boost_type": "rvol+range+mom+overnight",
+        }
+    elif strategy_id == "modular":
+        mod_entry_h = getattr(args, 'itm_entry_hour', 15)
+        mod_entry_m = getattr(args, 'itm_entry_minute', 30)
+        if mod_entry_h == 10 and mod_entry_m == 0:
+            mod_entry_h, mod_entry_m = 15, 30
+        sel_type = getattr(args, 'selector', 'composite')
+        return cls(symbols,
+                   selector_type=sel_type,
+                   select_top_n=getattr(args, 'top_k', 12),
+                   select_after_min=30,
+                   rs_threshold=args.rs_threshold,
+                   rs_stop_pct=args.stop_pct,
+                   rs_target_pct=args.profit_target_pct,
+                   spy_trend_days=args.spy_trend_days,
+                   rs_entry_after_min=max(args.entry_after_min, 30),
+                   rs_entry_end_hour=args.entry_end_hour,
+                   rs_close_hour=getattr(args, 'rs_close_hour', 15),
+                   rs_close_minute=getattr(args, 'rs_close_minute', 35),
+                   overnight_top_k=4,
+                   overnight_bottom_k=4,
+                   overnight_stop_pct=args.overnight_stop_pct,
+                   overnight_min_move=args.momentum_threshold,
+                   overnight_entry_hour=mod_entry_h,
+                   overnight_entry_minute=mod_entry_m,
+                   overnight_exit_after_min=args.exit_after_min,
+                   global_signal_symbol=getattr(args, 'global_signal', 'VGK')), {
+            "selector": sel_type,
+            "select_top_n": getattr(args, 'top_k', 12),
+            "rs_stop_pct": args.stop_pct,
+            "rs_target_pct": args.profit_target_pct,
+            "exit_after_min": args.exit_after_min,
+        }
+    elif strategy_id == "gapper_momentum":
+        return cls(symbols,
+                   min_gap_pct=args.min_gap_pct,
+                   max_gap_pct=args.max_gap_pct,
+                   confirm_after_min=args.entry_after_min if args.entry_after_min != 15 else 30,
+                   max_positions=getattr(args, 'top_k', 6),
+                   stop_buffer_pct=getattr(args, 'stop_buffer_pct', 0.2),
+                   target_mult=getattr(args, 'breakout_rr', 2.0),
+                   max_stop_pct=getattr(args, 'max_stop_pct_pdl', 3.0),
+                   exit_hour=15, exit_minute=25,
+                   entry_end_hour=args.entry_end_hour,
+                   direction=getattr(args, 'gap_direction', 'both'),
+                   use_spy_filter=not args.no_regime_filter), {
+            "min_gap_pct": args.min_gap_pct,
+            "max_gap_pct": args.max_gap_pct,
+            "max_positions": getattr(args, 'top_k', 6),
+            "target_mult": getattr(args, 'breakout_rr', 2.0),
+            "direction": getattr(args, 'gap_direction', 'both'),
+            "use_spy_filter": not args.no_regime_filter,
         }
     elif strategy_id == "dynamic_select":
         ds_entry_h = getattr(args, 'itm_entry_hour', 15)
